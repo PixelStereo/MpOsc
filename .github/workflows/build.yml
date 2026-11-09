@@ -1,0 +1,99 @@
+name: Desktop builds
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            runner: macos-latest
+            qt-arch: clang_64
+          - platform: Windows
+            runner: windows-2025
+            qt-arch: win64_msvc2022_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          arch: ${{ matrix.qt-arch }}
+          modules: qtmultimedia
+          cache: true
+      - name: Configure and compile
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel 4
+      - name: Package and test macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          app=build/MP_OSC.app
+          macdeployqt "$app" -always-overwrite
+          python -m pip install uv==0.9.28
+          python scripts/setup_mediapipe.py --bundle --directory "$app/Contents/Resources/mediapipe"
+          while IFS= read -r -d '' path; do
+            if file "$path" | grep -q 'Mach-O'; then codesign --force --sign - "$path"; fi
+          done < <(find "$app/Contents/Resources/mediapipe/python" -type f -print0)
+          cp LICENSE THIRD-PARTY.md "$app/Contents/Resources/"
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --keepParent "$app" dist/MP_OSC-macos-arm64.zip
+          ditto -x -k dist/MP_OSC-macos-arm64.zip "$RUNNER_TEMP/mp-osc-smoke"
+          "$RUNNER_TEMP/mp-osc-smoke/MP_OSC.app/Contents/MacOS/MP_OSC" --check-mediapipe
+      - name: Package and test Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist/package -Force | Out-Null
+          Copy-Item build/Release/MP_OSC.exe dist/package/
+          windeployqt --release --multimedia dist/package/MP_OSC.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pip install uv==0.9.28
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/setup_mediapipe.py --bundle --directory dist/package/mediapipe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item LICENSE, THIRD-PARTY.md dist/package/
+          Compress-Archive dist/package/* dist/MP_OSC-windows-x64.zip
+          $clean = Join-Path $env:RUNNER_TEMP mp-osc-smoke
+          Expand-Archive dist/MP_OSC-windows-x64.zip $clean
+          $process = Start-Process -FilePath (Join-Path $clean MP_OSC.exe) -ArgumentList '--check-mediapipe' -Wait -PassThru
+          if ($process.ExitCode) { exit $process.ExitCode }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MP_OSC-${{ matrix.platform }}
+          path: dist/MP_OSC-*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/MP_OSC-*.zip --repo "$GITHUB_REPOSITORY" --generate-notes

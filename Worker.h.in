@@ -1,0 +1,4 @@
+#pragma once
+inline constexpr char workerScript[] = R"MPOSC(
+@WORKER@
+)MPOSC";
