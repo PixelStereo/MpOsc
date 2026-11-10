@@ -1,4 +1,5 @@
 #include "SliderField.h"
+#include <QApplication>
 #include <QDoubleSpinBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -8,8 +9,6 @@
 
 namespace {
 constexpr int kFieldHeight = 24;
-const QColor kTrack("#1e1e21"), kAccent("#8394b3"), kBorder("#4b4b51");
-const QColor kTick(255, 255, 255, 38);
 
 // Flat field at the end of a bar: the value, typed, with its unit and no spin buttons.
 QDoubleSpinBox *valueField(QWidget *parent, Qt::Alignment align = Qt::AlignRight)
@@ -113,10 +112,12 @@ void SliderField::apply(double v, bool finished)
 void SliderField::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
+    auto colors = QApplication::palette();
+    colors.setCurrentColorGroup(isEnabled() ? QPalette::Active : QPalette::Disabled);
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF r = bar();
     p.setPen(Qt::NoPen);
-    p.setBrush(kTrack);
+    p.setBrush(colors.base());
     p.drawRoundedRect(r, 4, 4);
     auto xOf = [&](double v) {
         return r.left() + (std::clamp(v, m_min, m_max) - m_min) / (m_max - m_min) * r.width();
@@ -131,11 +132,13 @@ void SliderField::paintEvent(QPaintEvent *)
         p.drawRoundedRect(r, 4, 4);
         p.setOpacity(1.0);
     } else {
-        p.setBrush(isEnabled() ? kAccent : kBorder);
+        p.setBrush(colors.highlight());
         p.drawRoundedRect(QRectF(QPointF(std::min(x0, xv), r.top()), QPointF(std::max(x0, xv), r.bottom())), 4, 4);
     }
     if (m_ticks > 1) {
-        p.setPen(QPen(kTick, 1));
+        QColor tick = colors.color(QPalette::Text);
+        tick.setAlpha(64);
+        p.setPen(QPen(tick, 1));
         for (int i = 1; i < m_ticks; ++i) {
             const double x = r.left() + r.width() * i / m_ticks;
             p.drawLine(QPointF(x, r.top() + 3), QPointF(x, r.bottom() - 3));
@@ -147,18 +150,20 @@ void SliderField::paintEvent(QPaintEvent *)
         p.setPen(QPen(Qt::white, 1.4));
         p.drawLine(QPointF(xv, r.top() + 1), QPointF(xv, r.bottom() - 1));
     }
-    p.setPen(QPen(kBorder, 1));
+    p.setPen(QPen(colors.color(hasFocus() ? QPalette::Link : QPalette::Mid), 1));
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
-    if (hasFocus()) {
-        QColor accent = kAccent;
-        accent.setAlpha(140);
-        p.setPen(QPen(accent, 1));
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
-    }
-    p.setPen(QColor(isEnabled() ? "#ffffff" : "#99999f"));
-    p.drawText(r.adjusted(5, 0, -7, 0), Qt::AlignRight | Qt::AlignVCenter, m_spin->text());
 
+    const QRectF textArea = r.adjusted(5, 0, -7, 0);
+    const auto text = m_spin->text();
+    if (!m_gradient.isEmpty()) {
+        const int width = p.fontMetrics().horizontalAdvance(text) + 6;
+        p.setPen(Qt::NoPen);
+        p.setBrush(colors.base());
+        p.drawRoundedRect(QRectF(textArea.right() - width + 3, r.top() + 2, width, r.height() - 4), 3, 3);
+    }
+    p.setPen(colors.color(QPalette::Text));
+    p.drawText(textArea, Qt::AlignRight | Qt::AlignVCenter, text);
 }
 
 void SliderField::mousePressEvent(QMouseEvent *e)

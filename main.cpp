@@ -20,6 +20,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QStyleHints>
 #include <QtMath>
 #include <QPermissions>
 #include <QMouseEvent>
@@ -32,7 +33,63 @@
 #include <cmath>
 
 namespace {
-QIcon signalPinIcon(bool pinned)
+void applyInterfacePalette(QApplication &app, Qt::ColorScheme scheme)
+{
+    const bool dark = scheme == Qt::ColorScheme::Dark;
+    const QColor text(dark ? "#f0f4fa" : "#182234");
+    const QColor muted(dark ? "#b7c4d6" : "#49586c");
+    const QColor accent(dark ? "#435a7d" : "#a9bfdf");
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(dark ? "#252c37" : "#f2f5f9"));
+    palette.setColor(QPalette::Base, QColor(dark ? "#1d2430" : "#ffffff"));
+    palette.setColor(QPalette::AlternateBase, QColor(dark ? "#303a49" : "#e9edf4"));
+    palette.setColor(QPalette::Button, QColor(dark ? "#303947" : "#ffffff"));
+    palette.setColor(QPalette::Mid, QColor(dark ? "#7789a3" : "#64758b"));
+    palette.setColor(QPalette::Light, QColor(dark ? "#4b586c" : "#ffffff"));
+    palette.setColor(QPalette::Midlight, QColor(dark ? "#3a4759" : "#e7ecf4"));
+    palette.setColor(QPalette::Dark, QColor(dark ? "#121822" : "#a6b3c6"));
+    palette.setColor(QPalette::Shadow, QColor(dark ? "#0b1018" : "#73849b"));
+    palette.setColor(QPalette::Highlight, accent);
+    palette.setColor(QPalette::Link, QColor(dark ? "#adc8ef" : "#315a89"));
+    palette.setColor(QPalette::LinkVisited, QColor(dark ? "#cdb8ef" : "#624587"));
+    palette.setColor(QPalette::ToolTipBase, palette.color(QPalette::Base));
+    palette.setColor(QPalette::ToolTipText, text);
+    palette.setColor(QPalette::PlaceholderText, muted);
+    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText, QPalette::HighlightedText}) {
+        palette.setColor(role, text);
+        palette.setColor(QPalette::Disabled, role, muted);
+    }
+    palette.setColor(QPalette::Disabled, QPalette::Highlight, palette.color(QPalette::AlternateBase));
+    app.setPalette(palette);
+
+    QString style = QStringLiteral(R"(
+QGroupBox#section { border:1px solid @border; border-radius:8px; margin-top:9px; }
+QGroupBox#section::title { color:@text; subcontrol-origin:margin; left:11px; padding:0 5px; font-weight:600; }
+QPushButton#toggle { background:@button; color:@text; border:1px solid @border; border-radius:6px; padding:5px 9px; }
+QPushButton#toggle:hover, QPushButton#toggle:focus { border-color:@focus; }
+QPushButton#toggle:checked { background:@fill; color:@text; border-color:@focus; font-weight:600; }
+QPushButton#toggle:disabled { color:@muted; }
+QPushButton#signalName { background:transparent; color:@text; text-align:left;
+    border:1px solid transparent; border-radius:5px; padding:3px 6px; }
+QPushButton#signalName:hover, QPushButton#signalName:focus { background:@alternate; }
+QFrame#signalCell { border:1px solid transparent; border-radius:5px; }
+QFrame#signalCell[oscEnabled="true"] { border-color:@focus; }
+QToolButton#signalPin { border:1px solid transparent; border-radius:4px; }
+QToolButton#signalPin:hover, QToolButton#signalPin:checked { background:@alternate; }
+QToolButton#signalPin:focus { border-color:@focus; }
+QProgressBar#signalValue { background:@base; color:@text; border:1px solid @border; border-radius:4px; text-align:center; }
+QProgressBar#signalValue::chunk { background:@fill; border-radius:3px; }
+QProgressBar#signalValue:disabled { color:@muted; }
+QProgressBar#signalValue::chunk:disabled { background:@alternate; }
+)");
+    style.replace("@text", text.name()).replace("@muted", muted.name()).replace("@fill", accent.name())
+         .replace("@button", palette.color(QPalette::Button).name()).replace("@base", palette.color(QPalette::Base).name())
+         .replace("@alternate", palette.color(QPalette::AlternateBase).name()).replace("@border", palette.color(QPalette::Mid).name())
+         .replace("@focus", palette.color(QPalette::Link).name());
+    app.setStyleSheet(style);
+}
+
+QIcon signalPinIcon(bool pinned, const QColor &color)
 {
     QPixmap icon(32, 32);
     icon.setDevicePixelRatio(2);
@@ -41,7 +98,6 @@ QIcon signalPinIcon(bool pinned)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.translate(8, 8);
     painter.rotate(pinned ? 0 : 38);
-    const QColor color(pinned ? "#8394b3" : "#a5a5af");
     painter.setPen(QPen(color, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(pinned ? QBrush(color) : QBrush(Qt::NoBrush));
     QPainterPath head;
@@ -57,6 +113,30 @@ QIcon signalPinIcon(bool pinned)
     painter.end();
     return QIcon(icon);
 }
+
+class PinButton final : public QToolButton {
+public:
+    PinButton()
+    {
+        setCheckable(true);
+        setFixedSize(24, 24);
+        setIconSize(QSize(16, 16));
+        setCursor(Qt::PointingHandCursor);
+        setObjectName("signalPin");
+        connect(this, &QToolButton::toggled, this, [this] { refreshIcon(); });
+        refreshIcon();
+    }
+
+protected:
+    void changeEvent(QEvent *event) override
+    {
+        QToolButton::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) refreshIcon();
+    }
+
+private:
+    void refreshIcon() { setIcon(signalPinIcon(isChecked(), QApplication::palette().color(QPalette::Link))); }
+};
 
 class SignalItem final : public QTreeWidgetItem
 {
@@ -330,9 +410,6 @@ public:
         const auto section = [layout](const QString &name) {
             auto *box = new QGroupBox(name);
             box->setObjectName("section");
-            box->setStyleSheet(QStringLiteral(
-                "QGroupBox#section { border:1px solid #495465; border-radius:8px; margin-top:9px; }"
-                "QGroupBox#section::title { subcontrol-origin:margin; left:11px; padding:0 5px; font-weight:600; }"));
             auto *row = new QHBoxLayout(box);
             row->setContentsMargins(12, 13, 12, 9);
             row->setSpacing(8);
@@ -369,12 +446,7 @@ public:
         bodyTracking = new QPushButton("Body");
         const auto styleToggle = [](QPushButton *button) {
             button->setCheckable(true);
-            button->setStyleSheet(QStringLiteral(
-                "QPushButton { background:#343439; color:#e1e1e4; border:1px solid #505057;"
-                " border-radius:6px; padding:5px 9px; }"
-                "QPushButton:hover { border-color:#9aabc6; }"
-                "QPushButton:checked { background:#8394b3; color:#1a1a1d;"
-                " border-color:#9aabc6; font-weight:600; }"));
+            button->setObjectName("toggle");
         };
         for (auto *button : {faceTracking, handTracking, bodyTracking}) styleToggle(button);
         const int previousTracking = settings.value("video/trackingMask", 4).toInt();
@@ -523,8 +595,6 @@ public:
         previewLayout->addLayout(previewTools);
         resolution = new QLabel("No video frame");
         telemetry = new QLabel("Waiting for input");
-        resolution->setStyleSheet("color:#a0acbe;");
-        telemetry->setStyleSheet("color:#a0acbe;");
         previewLayout->addWidget(resolution);
         previewLayout->addWidget(telemetry);
         connect(roi, &QPushButton::toggled, picture, [this](bool enabled) {
@@ -1096,35 +1166,22 @@ private:
         auto *signal = new QPushButton(address);
         signal->setCheckable(true);
         signal->setChecked(settings.value(settingsKey + "/send", false).toBool());
-        signal->setStyleSheet(QStringLiteral(
-            "QPushButton { background:transparent; color:#e1e1e4; text-align:left;"
-            " border:1px solid transparent; border-radius:5px; padding:3px 6px; }"
-            "QPushButton:hover { background:#343439; }"));
+        signal->setObjectName("signalName");
         auto *nameCell = new QFrame;
+        nameCell->setObjectName("signalCell");
         const auto updateOutline = [nameCell](bool enabled) {
-            nameCell->setStyleSheet(enabled
-                ? QStringLiteral("QFrame { border:1px solid #8394b3; border-radius:5px; }")
-                : QStringLiteral("QFrame { border:1px solid transparent; border-radius:5px; }"));
+            nameCell->setProperty("oscEnabled", enabled);
+            nameCell->style()->unpolish(nameCell);
+            nameCell->style()->polish(nameCell);
+            nameCell->update();
         };
         updateOutline(signal->isChecked());
         connect(signal, &QPushButton::toggled, nameCell, updateOutline);
         auto *nameLayout = new QHBoxLayout(nameCell);
         nameLayout->setContentsMargins(1, 1, 1, 1);
         nameLayout->setSpacing(4);
-        auto *pin = new QToolButton;
-        pin->setFixedSize(24, 24);
-        pin->setIconSize(QSize(16, 16));
-        pin->setCursor(Qt::PointingHandCursor);
-        pin->setCheckable(true);
-        pin->setAutoRaise(true);
-        pin->setStyleSheet(QStringLiteral(
-            "QToolButton { border:0; border-radius:4px; }"
-            "QToolButton:hover { background:#343439; }"
-            "QToolButton:checked { background:#282e3b; }"));
+        auto *pin = new PinButton;
         pin->setChecked(pinned);
-        static const QIcon unpinnedIcon = signalPinIcon(false);
-        static const QIcon pinnedIcon = signalPinIcon(true);
-        pin->setIcon(pinned ? pinnedIcon : unpinnedIcon);
         pin->setToolTip(pinned ? "Unpin signal" : "Pin signal");
         pin->setAccessibleName(pin->toolTip());
         connect(pin, &QToolButton::toggled, this, [this, address, settingsKey](bool enabled) {
@@ -1162,12 +1219,7 @@ private:
             meter->setRange(0, 1000);
         }
         meter->setEnabled(send->isChecked() && signal->isChecked());
-        meter->setStyleSheet(QStringLiteral(
-            "QProgressBar { background:#1e1e21; color:#e1e1e4; border:1px solid #4b4b51;"
-            " border-radius:4px; text-align:center; }"
-            "QProgressBar::chunk { background:#8394b3; border-radius:3px; }"
-            "QProgressBar:disabled { color:#99999f; }"
-            "QProgressBar::chunk:disabled { background:#45454d; }"));
+        meter->setObjectName("signalValue");
         view->setItemWidget(item, 5, meter);
         connect(signal, &QPushButton::toggled, this, [this, address, settingsKey, meter](bool enabled) {
             rows[address].sent = false;
@@ -1303,10 +1355,12 @@ int main(int argc, char **argv)
     app.setApplicationVersion(QStringLiteral(MPOSC_VERSION));
     app.setWindowIcon(QIcon(":/assets/MpOsc.png"));
     app.setOrganizationName("PixelStereo");
-    auto palette = app.palette();
-    palette.setColor(QPalette::Highlight, QColor("#8394b3"));
-    palette.setColor(QPalette::HighlightedText, QColor("#1a1a1d"));
-    app.setPalette(palette);
+    app.setStyle("Fusion");
+    auto *hints = QGuiApplication::styleHints();
+    applyInterfacePalette(app, hints->colorScheme());
+    QObject::connect(hints, &QStyleHints::colorSchemeChanged, &app, [&app](Qt::ColorScheme scheme) {
+        applyInterfacePalette(app, scheme);
+    });
     if (app.arguments().contains("--check-mediapipe")) {
         const auto root = runtimeFolder();
         QProcess worker;
