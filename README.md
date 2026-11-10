@@ -5,7 +5,7 @@
 **Turn movement into live OSC.** Use a camera, a video, Syphon on macOS or Spout on Windows to play your visuals, sound and lighting with your face, hands and body. Tracking runs on your machine.
 
 <!-- release-downloads:start -->
-**[Download Mac](https://github.com/PixelStereo/MpOsc/releases/download/v0.2.0/MpOsc-macos-arm64-v0.2.0.zip)** · **[Download Windows](https://github.com/PixelStereo/MpOsc/releases/download/v0.2.0/MpOsc-windows-x64-v0.2.0-Setup.exe)**
+**[Download Mac](https://github.com/PixelStereo/MpOsc/releases/download/v0.2.1/MpOsc-macos-arm64-v0.2.1.zip)** · **[Download Windows](https://github.com/PixelStereo/MpOsc/releases/download/v0.2.1/MpOsc-windows-x64-v0.2.1-Setup.exe)**
 <!-- release-downloads:end -->
 
 On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows x64**, run the installer and launch MpOsc from the Start menu.
