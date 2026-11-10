@@ -3,7 +3,6 @@
 #include <QJsonArray>
 #include <QPainter>
 #include <QPainterPath>
-#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <optional>
@@ -20,7 +19,7 @@ public:
 
     std::optional<QPointF> point(int index) const
     {
-        if (index >= points.size() || (!visibility.isEmpty() && visibility.at(index).toDouble() < .45)) return {};
+        if (index >= points.size() || (index < visibility.size() && visibility.at(index).toDouble() < .45)) return {};
         const auto p = points.at(index).toArray();
         if (p.size() < 2 || !p.at(0).isDouble() || !p.at(1).isDouble()) return {};
         const double x = p.at(0).toDouble(), y = p.at(1).toDouble();

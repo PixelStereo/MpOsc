@@ -340,8 +340,8 @@ public:
             return row;
         };
         auto *source = section("Video Input");
-        auto *inputModes = new QButtonGroup(this);
-        auto *inputPages = new QStackedWidget;
+        inputModes = new QButtonGroup(this);
+        inputPages = new QStackedWidget;
         auto *cameraMode = new QPushButton("Camera");
         auto *fileMode = new QPushButton("Video File");
         auto *cameraPage = new QWidget;
@@ -381,12 +381,13 @@ public:
         faceTracking->setChecked(previousTracking & 4);
         handTracking->setChecked(previousTracking & 2);
         bodyTracking->setChecked(previousTracking & 8);
-        const auto addInputMode = [&](QPushButton *mode, QWidget *page) {
+        const auto addInputMode = [&](QPushButton *mode, QWidget *page, const char *key) {
             styleToggle(mode);
+            mode->setProperty("sourceKey", key);
             inputModes->addButton(mode, inputPages->addWidget(page));
             source->addWidget(mode);
         };
-        addInputMode(cameraMode, cameraPage);
+        addInputMode(cameraMode, cameraPage, "camera");
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #ifdef Q_OS_MACOS
         const auto sharedLabel = QStringLiteral("Syphon");
@@ -404,7 +405,7 @@ public:
         auto *sharedButton = new QPushButton("Choose sender…");
         sharedLayout->addWidget(sharedName, 1);
         sharedLayout->addWidget(sharedButton);
-        addInputMode(sharedMode, sharedPage);
+        addInputMode(sharedMode, sharedPage, "shared");
         connect(sharedButton, &QPushButton::clicked, this, [this, sharedButton, sharedLabel, sharedName] {
             QMenu menu;
             for (const auto &sender : sharedSenders()) {
@@ -420,6 +421,10 @@ public:
             if (!choice) return;
             if (choice == flip) {
                 sharedFlip = flip->isChecked();
+                if (videoSource == VideoSource::Shared) {
+                    ++sourceGeneration;
+                    latest = {};
+                }
                 return;
             }
             auto receiver = openSharedSender(choice->data().toString());
@@ -430,16 +435,19 @@ public:
             stopSource();
             sharedInput = std::move(receiver);
             videoSource = VideoSource::Shared;
+            stopButton->setEnabled(true);
             sharedName->setText(choice->text());
             status->setText(QStringLiteral("Waiting for %1 · %2").arg(sharedLabel, choice->text()));
         });
 #endif
-        addInputMode(fileMode, filePage);
-        cameraMode->setChecked(true);
+        addInputMode(fileMode, filePage, "file");
+        selectInputMode(settings.value("video/inputMode", "camera").toString());
         connect(inputModes, &QButtonGroup::idClicked, inputPages, &QStackedWidget::setCurrentIndex);
         source->addSpacing(8);
         source->addWidget(inputPages, 1);
         source->addWidget(stop);
+        stopButton = stop;
+        stopButton->setEnabled(false);
 
         auto *detection = section("Detection");
         for (auto *button : {faceTracking, handTracking, bodyTracking}) detection->addWidget(button);
@@ -620,6 +628,7 @@ public:
                     });
                     capture.setCamera(camera.get());
                     videoSource = VideoSource::Camera;
+                    stopButton->setEnabled(true);
                     camera->start();
                     return;
                 }
@@ -646,6 +655,7 @@ public:
             fileName->setText(QFileInfo(path).fileName());
             stopSource();
             videoSource = VideoSource::File;
+            stopButton->setEnabled(true);
             player.setSource(QUrl::fromLocalFile(path));
             player.play();
         });
@@ -676,7 +686,8 @@ public:
                         status->setText(entry.value().toString());
                 }
                 if (!active) continue;
-                const bool current = submittedMask == trackingMask() && submittedOptions == detectionOptions.packet();
+                const bool current = submittedMask == trackingMask() && submittedOptions == detectionOptions.packet()
+                    && submittedGeneration == sourceGeneration && submittedSelection == picture->roi && !picture->isDrawing();
                 const QRectF region(double(submittedRoi.x()) / submittedSource.width(),
                                     double(submittedRoi.y()) / submittedSource.height(),
                                     double(submittedRoi.width()) / submittedSource.width(),
@@ -727,7 +738,8 @@ public:
             }
             if (!ready) return;
             submittedSource = std::exchange(latest, QImage()).convertToFormat(QImage::Format_RGBA8888);
-            const auto roi = picture->roi;
+            submittedSelection = picture->roi;
+            const auto &roi = submittedSelection;
             const int width = submittedSource.width(), height = submittedSource.height();
             submittedRoi = QRectF(roi.x() * width, roi.y() * height, roi.width() * width, roi.height() * height)
                                .toAlignedRect().intersected(submittedSource.rect());
@@ -738,9 +750,10 @@ public:
             }
             submittedMask = trackingMask();
             submittedOptions = detectionOptions.packet();
+            submittedGeneration = sourceGeneration;
             QByteArray packet = QByteArray::number(submitted.width()) + ' ' + QByteArray::number(submitted.height()) +
                                 ' ' + QByteArray::number(submittedMask) + ' ' + submittedOptions +
-                                ' ' + QByteArray::number(sourceGeneration) + '\n';
+                                ' ' + QByteArray::number(submittedGeneration) + '\n';
             for (int y = 0; y < submitted.height(); ++y)
                 packet.append(reinterpret_cast<const char *>(submitted.constScanLine(y)), submitted.width() * 4);
             active = busy = true;
@@ -760,6 +773,7 @@ public:
             settings.setValue("video/cameraId", cameraChoice->currentData());
         settings.setValue("video/trackingMask", trackingMask());
         settings.setValue("video/sharedFlip", sharedFlip);
+        if (const auto *mode = inputModes->checkedButton()) settings.setValue("video/inputMode", mode->property("sourceKey"));
         settings.setValue("video/minDetection", detectionOptions.confidence);
         settings.setValue("video/minTracking", detectionOptions.tracking);
         settings.setValue("video/maxHands", detectionOptions.hands);
@@ -784,6 +798,24 @@ public:
     }
 
 private:
+    void selectInputMode(const QString &key)
+    {
+        int id = 0;
+        for (auto *button : inputModes->buttons()) {
+            if (button->property("sourceKey").toString() != key) continue;
+            id = inputModes->id(button);
+            break;
+        }
+        if (auto *button = inputModes->button(id)) button->setChecked(true);
+        inputPages->setCurrentIndex(id);
+    }
+
+    static bool configurationKey(const QString &key)
+    {
+        return key == "destinations" || key.startsWith("signals/") || key.startsWith("video/") ||
+               key.startsWith("window/") || key.startsWith("osc/");
+    }
+
     void installMenus(QVBoxLayout *layout)
     {
         auto *bar = new QMenuBar(this);
@@ -891,7 +923,7 @@ private:
         storeSettings(local);
         QSettings snapshot(staging.filePath("snapshot.ini"), QSettings::IniFormat);
         for (const auto &key : local.allKeys())
-            if (key != "recentConfigurations") snapshot.setValue(key, local.value(key));
+            if (configurationKey(key)) snapshot.setValue(key, local.value(key));
         snapshot.setValue("formatVersion", 1);
         snapshot.sync();
         QFile data(snapshot.fileName());
@@ -920,9 +952,9 @@ private:
         }
         stopSource();
         QSettings local;
-        for (const auto &group : {"signals", "video", "window", "osc"}) local.remove(group);
+        for (const auto &group : {"signals", "video", "window", "osc", "destinations"}) local.remove(group);
         for (const auto &key : snapshot.allKeys()) {
-            if (key != "formatVersion" && key != "recentConfigurations") local.setValue(key, snapshot.value(key));
+            if (configurationKey(key)) local.setValue(key, snapshot.value(key));
         }
         local.sync();
         rows.clear();
@@ -938,6 +970,7 @@ private:
 #else
         sharedFlip = local.value("video/sharedFlip", false).toBool();
 #endif
+        selectInputMode(local.value("video/inputMode", "camera").toString());
         const int mask = local.value("video/trackingMask", 4).toInt();
         faceTracking->setChecked(mask & 4);
         handTracking->setChecked(mask & 2);
@@ -994,6 +1027,7 @@ private:
     void stopSource()
     {
         videoSource = VideoSource::None;
+        stopButton->setEnabled(false);
         sharedInput.reset();
         if (camera) camera->stop();
         player.stop();
@@ -1228,7 +1262,9 @@ private:
     QByteArray workerLog;
     bool workerRetried = false, shuttingDown = false;
     QLineEdit *destinations, *search;
-    QPushButton *send, *previewMirror, *previewLandmarks;
+    QPushButton *send, *previewMirror, *previewLandmarks, *stopButton;
+    QButtonGroup *inputModes;
+    QStackedWidget *inputPages;
     SliderField *minDetection, *minTracking, *maxHands;
     DetectionOptions detectionOptions;
     QString configurationPath;
@@ -1253,7 +1289,8 @@ private:
     QImage latest, submitted, submittedSource;
     QRect submittedRoi, previousRoi;
     QByteArray submittedOptions;
-    int sourceGeneration = 0;
+    QRectF submittedSelection;
+    int sourceGeneration = 0, submittedGeneration = 0;
     int submittedMask = 0;
     bool ready = false, busy = false, active = false, sharedFlip = false;
 };
