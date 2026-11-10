@@ -4,6 +4,7 @@ from contextlib import suppress
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 MODELS = {
@@ -34,6 +35,9 @@ def run(folder):
     tasks = {}
     delegates = {}
     cpu_only = set()
+    tracking_tasks = {"hands", "gestures", "face", "pose"}
+    configuration = None
+    timestamp = 0
     backend = os.environ.get("NYXMAP_MEDIAPIPE_DELEGATE", "auto").lower()
     if backend not in ("auto", "cpu", "gpu"):
         raise ValueError("NYXMAP_MEDIAPIPE_DELEGATE must be auto, cpu or gpu")
@@ -47,13 +51,17 @@ def run(folder):
             model = folder / filename
             if not model.is_file():
                 raise FileNotFoundError(f"Missing MediaPipe model: {filename}")
+            detection, tracking, max_hands, _ = configuration
             options = {}
+            if task in tracking_tasks:
+                options.update(running_mode=vision.RunningMode.VIDEO, min_tracking_confidence=tracking)
             if task in ("hands", "gestures"):
-                options.update(num_hands=2, min_hand_detection_confidence=.5)
+                options.update(num_hands=max_hands, min_hand_detection_confidence=detection)
             elif task == "face":
-                options.update(num_faces=1, output_face_blendshapes=True, output_facial_transformation_matrixes=True)
+                options.update(num_faces=1, min_face_detection_confidence=detection,
+                               output_face_blendshapes=True, output_facial_transformation_matrixes=True)
             elif task == "pose":
-                options.update(num_poses=1)
+                options.update(num_poses=1, min_pose_detection_confidence=detection)
             elif task == "objects":
                 options.update(max_results=10, score_threshold=.5)
             elif task == "classification":
@@ -80,7 +88,7 @@ def run(folder):
             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgba[:, :, :3]))
         detector = tasks[task]
         if task in ("hands", "gestures"):
-            result = detector.detect(image) if task == "hands" else detector.recognize(image)
+            result = detector.detect_for_video(image, timestamp) if task == "hands" else detector.recognize_for_video(image, timestamp)
             output = {"hands": [
                 {"points": points(hand), "world": points(result.hand_world_landmarks[i]), "score": result.handedness[i][0].score,
                  "right": result.handedness[i][0].category_name == "Right",
@@ -99,7 +107,7 @@ def run(folder):
                 draw_hands(annotated)
             return output
         if task == "face":
-            result = detector.detect(image)
+            result = detector.detect_for_video(image, timestamp)
             output = {"face": [
                 {"points": points(face), "expressions": {p.category_name: p.score for p in result.face_blendshapes[i]},
                  "blendshapes": {p.index: p.score for p in result.face_blendshapes[i]},
@@ -123,7 +131,7 @@ def run(folder):
                 draw_face(annotated)
             return output
         if task == "pose":
-            result = detector.detect(image)
+            result = detector.detect_for_video(image, timestamp)
             if annotated is not None:
                 for pose in result.pose_landmarks:
                     vision.drawing_utils.draw_landmarks(
@@ -166,13 +174,25 @@ def run(folder):
     reply({"ready": True})
     for line in sys.stdin.buffer:
         try:
-            width, height, mask = map(int, line.split())
+            header = list(map(int, line.split()))
+            width, height, mask = header[:3]
+            detection, tracking, max_hands, generation = header[3:] or (50, 50, 2, 0)
+            requested = (max(0, min(100, detection)) / 100, max(0, min(100, tracking)) / 100,
+                         max(1, min(2, max_hands)), generation)
             if width <= 0 or height <= 0:
                 raise ValueError("Invalid frame size")
             data = sys.stdin.buffer.read(width * height * 4)
             if len(data) != width * height * 4:
                 break
             rgba = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
+            if configuration != requested:
+                for task in tracking_tasks & tasks.keys():
+                    with suppress(Exception):
+                        tasks.pop(task).close()
+                    delegates.pop(task, None)
+                configuration = requested
+            timestamp = max(timestamp + 1, time.monotonic_ns() // 1_000_000)
+            started = time.perf_counter()
             result = {}
             annotated = None
             if mask & (1 << 12):
@@ -196,6 +216,7 @@ def run(folder):
                             except Exception as fallback_error:
                                 error = fallback_error
                         result[task + "_error"] = str(error)
+            result["inference_ms"] = (time.perf_counter() - started) * 1000
             if annotated is not None:
                 ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
                 if ok:

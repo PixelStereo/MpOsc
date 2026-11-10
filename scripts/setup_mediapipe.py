@@ -46,7 +46,7 @@ def bundle_python(folder):
     if runtime.exists():
         raise RuntimeError(f"Bundle destination already contains Python: {runtime}")
     uv = [sys.executable, "-m", "uv"]
-    with tempfile.TemporaryDirectory(prefix="mp-osc-python-") as directory:
+    with tempfile.TemporaryDirectory(prefix="mposc-python-") as directory:
         managed = Path(directory)
         env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(managed)}
         subprocess.run([*uv, "python", "install", "3.11", "--no-bin"], env=env, check=True)

@@ -1,0 +1,3 @@
+#pragma once
+#define MPOSC_VERSION "@MPOSC_VERSION@"
+#define MPOSC_APP_NAME "@MPOSC_APP_NAME@"

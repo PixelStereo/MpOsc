@@ -25,6 +25,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.9.3'
@@ -48,13 +51,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          app=build/MP_OSC.app
-          file "$app/Contents/MacOS/MP_OSC" | grep -q arm64
+          app_name=$(jq -r .name build/application.json)
+          version=$(jq -r .version build/application.json)
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; fi
+          archive="dist/MpOsc-macos-arm64-$version.zip"
+          app="build/$app_name.app"
+          file "$app/Contents/MacOS/$app_name" | grep -q arm64
           macdeployqt "$app" -always-overwrite
           test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
           python -m pip install uv==0.9.28
           python scripts/setup_mediapipe.py --bundle --directory "$app/Contents/Resources/mediapipe"
           cp LICENSE THIRD-PARTY.md "$app/Contents/Resources/"
+          cp third_party/syphon/License.txt "$app/Contents/Resources/Syphon-LICENSE.txt"
           while IFS= read -r -d '' path; do
             if file "$path" | grep -q 'Mach-O'; then codesign --force --sign - "$path"; fi
           done < <(find "$app/Contents" -type f -print0)
@@ -63,23 +71,29 @@ jobs:
           done < <(find "$app/Contents" -depth -type d \( -name '*.framework' -o -name '*.bundle' -o -name '*.app' \) -print0)
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
-          ditto -c -k --keepParent "$app" dist/MP_OSC-macos-arm64.zip
-          ditto -x -k dist/MP_OSC-macos-arm64.zip "$RUNNER_TEMP/mp-osc-smoke"
-          PATH=/usr/bin:/bin NYXMAP_MEDIAPIPE_DELEGATE=cpu "$RUNNER_TEMP/mp-osc-smoke/MP_OSC.app/Contents/MacOS/MP_OSC" --check-mediapipe
+          ditto -c -k --keepParent "$app" "$archive"
+          ditto -x -k "$archive" "$RUNNER_TEMP/mposc-smoke"
+          PATH=/usr/bin:/bin NYXMAP_MEDIAPIPE_DELEGATE=cpu "$RUNNER_TEMP/mposc-smoke/$app_name.app/Contents/MacOS/$app_name" --check-mediapipe
       - name: Package and test Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path dist/package -Force | Out-Null
-          Copy-Item build/Release/MP_OSC.exe dist/package/
-          windeployqt --release --multimedia --no-compiler-runtime dist/package/MP_OSC.exe
+          $app = Get-Content build/application.json -Raw | ConvertFrom-Json
+          $appName = $app.name
+          $version = $app.version
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $version = $env:GITHUB_REF_NAME }
+          $installerName = "MpOsc-windows-x64-$version-Setup.exe"
+          Copy-Item "build/Release/$appName.exe" dist/package/
+          windeployqt --release --multimedia --no-compiler-runtime "dist/package/$appName.exe"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip install uv==0.9.28
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python scripts/setup_mediapipe.py --bundle --directory dist/package/mediapipe
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Copy-Item LICENSE, THIRD-PARTY.md dist/package/
+          Copy-Item third_party/spout2/LICENSE dist/package/Spout2-LICENSE.txt
           $crt = Get-ChildItem (Join-Path $env:VCToolsRedistDir "x64") -Directory -Filter "Microsoft.VC*.CRT" |
             Select-Object -First 1
           if (!$crt) { throw "Microsoft Visual C++ runtime DLLs are missing" }
@@ -94,14 +108,14 @@ jobs:
           choco install nsis --yes --no-progress
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $compiler = Join-Path ${env:ProgramFiles(x86)} "NSIS/makensis.exe"
-          & $compiler packaging/windows.nsi
+          & $compiler "/DAPP_NAME=$appName" "/DAPP_VERSION=$($app.version)" "/DINSTALLER_NAME=$installerName" packaging/windows.nsi
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-          $setup = (Resolve-Path dist/MP_OSC-Windows-x64-Setup.exe).Path
-          $clean = Join-Path $env:RUNNER_TEMP "MP OSC installed"
+          $setup = (Resolve-Path "dist/$installerName").Path
+          $clean = Join-Path $env:RUNNER_TEMP "MpOsc installed"
           $installer = Start-Process -FilePath $setup -ArgumentList "/S /D=$clean" -Wait -PassThru
           if ($installer.ExitCode) { throw "Installer failed: $($installer.ExitCode)" }
-          $exe = Join-Path $clean "app/MP_OSC.exe"
+          $exe = Join-Path $clean "app/$appName.exe"
           if (!(Test-Path $exe)) { throw "Installed executable is missing" }
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           $env:NYXMAP_MEDIAPIPE_DELEGATE = 'cpu'
@@ -109,10 +123,10 @@ jobs:
           if ($process.ExitCode) { throw "Installed app self-test failed: $($process.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
-          name: MP_OSC-${{ matrix.platform }}
+          name: MpOsc-${{ matrix.platform }}
           path: |
-            dist/MP_OSC-macos-arm64.zip
-            dist/MP_OSC-Windows-x64-Setup.exe
+            dist/MpOsc-macos-arm64-*.zip
+            dist/MpOsc-windows-x64-*-Setup.exe
           if-no-files-found: error
 
   release:
@@ -131,12 +145,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          assets=(dist/MP_OSC-macos-arm64.zip dist/MP_OSC-Windows-x64-Setup.exe)
+          assets=("dist/MpOsc-macos-arm64-$GITHUB_REF_NAME.zip" "dist/MpOsc-windows-x64-$GITHUB_REF_NAME-Setup.exe")
           for asset in "${assets[@]}"; do test -s "$asset"; done
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "MpOsc $GITHUB_REF_NAME"
           fi
 
   release-metadata:

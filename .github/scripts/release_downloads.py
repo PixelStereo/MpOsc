@@ -7,7 +7,7 @@ import sys
 
 START = "<!-- release-downloads:start -->"
 END = "<!-- release-downloads:end -->"
-ASSETS = {
+LEGACY_ASSETS = {
     "Download Mac": "MP_OSC-macos-arm64.zip",
     "Download Windows": "MP_OSC-Windows-x64-Setup.exe",
 }
@@ -21,8 +21,13 @@ def download_links(releases, repository):
         uploaded = {asset["name"]: asset["browser_download_url"] for asset in release["assets"]
                     if asset["state"] == "uploaded" and asset["size"] > 0}
         base = f"https://github.com/{repository}/releases/download/{tag}/"
-        if all(uploaded.get(filename) == base + filename for filename in ASSETS.values()):
-            return " · ".join(f"**[{label}]({base}{filename})**" for label, filename in ASSETS.items())
+        assets = {
+            "Download Mac": f"MpOsc-macos-arm64-{tag}.zip",
+            "Download Windows": f"MpOsc-windows-x64-{tag}-Setup.exe",
+        }
+        for pair in (assets, LEGACY_ASSETS):
+            if all(uploaded.get(filename) == base + filename for filename in pair.values()):
+                return " · ".join(f"**[{label}]({base}{filename})**" for label, filename in pair.items())
     raise ValueError("No published release contains both desktop packages")
 
 

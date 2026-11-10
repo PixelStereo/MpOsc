@@ -1,6 +1,9 @@
 #include "OscCodec.h"
 #include "SliderField.h"
 #include "Worker.h"
+#include "MpOscVersion.h"
+#include "SharedInput.h"
+#include "TrackingOverlay.h"
 
 #include <QtWidgets>
 #include <QSaveFile>
@@ -76,32 +79,52 @@ class VideoPreview final : public QWidget
 public:
     using QWidget::QWidget;
     QRectF roi{0, 0, 1, 1};
-    bool editRoi = false;
-    void showFrame(const QImage &frame) { image = frame; update(); }
+    bool editRoi = false, mirror = false, showLandmarks = true;
+    bool isDrawing() const { return dragging; }
+    void showFrame(const QImage &frame, const QJsonObject &tracking = {}, const QRectF &trackedArea = {})
+    {
+        image = frame;
+        result = tracking;
+        inferenceRegion = trackedArea;
+        update();
+    }
 
 protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor("#1e1e21"));
+        painter.fillRect(rect(), QColor("#12151b"));
         if (image.isNull()) {
             painter.setPen(QColor("#e1e1e4"));
-            painter.drawText(rect(), Qt::AlignCenter, "Choose a camera or a video");
+            painter.drawText(rect(), Qt::AlignCenter, "Choose a video input to begin");
             return;
         }
         const auto area = imageRect();
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.save();
+        if (mirror) {
+            painter.translate(2 * area.center().x(), 0);
+            painter.scale(-1, 1);
+        }
         painter.drawImage(area, image);
+        painter.restore();
+
+        if (showLandmarks && !inferenceRegion.isEmpty())
+            drawTrackingOverlay(painter, toPreview(inferenceRegion, area), result, mirror);
         if (editRoi || roi != QRectF(0, 0, 1, 1)) {
-            const QRectF selection(area.x() + roi.x() * area.width(), area.y() + roi.y() * area.height(),
-                                   roi.width() * area.width(), roi.height() * area.height());
+            const auto selection = toPreview(roi, area);
             QPainterPath shade;
             shade.addRect(area);
             shade.addRect(selection);
-            painter.fillPath(shade, QColor(0, 0, 0, 90));
-            painter.setPen(QPen(QColor("#8394b3"), 2));
+            painter.fillPath(shade, QColor(0, 0, 0, 214));
+            painter.setPen(QPen(QColor("#a5c5e9"), 1.2, editRoi ? Qt::DashLine : Qt::SolidLine));
             painter.drawRect(selection.adjusted(1, 1, -1, -1));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor("#a5c5e9"));
+            for (const auto &corner : {selection.topLeft(), selection.topRight(), selection.bottomLeft(), selection.bottomRight()})
+                painter.drawEllipse(corner, 2.5, 2.5);
         }
+
     }
 
     void mousePressEvent(QMouseEvent *event) override
@@ -122,6 +145,13 @@ protected:
     }
 
 private:
+    QRectF toPreview(const QRectF &region, const QRectF &area) const
+    {
+        const auto x = mirror ? 1 - region.right() : region.x();
+        return QRectF(area.x() + x * area.width(), area.y() + region.y() * area.height(),
+                      region.width() * area.width(), region.height() * area.height());
+    }
+
     QRectF imageRect() const
     {
         if (image.isNull()) return {};
@@ -131,7 +161,8 @@ private:
     QPointF imagePoint(const QPointF &point) const
     {
         const auto area = imageRect();
-        return {std::clamp((point.x() - area.x()) / std::max(1., area.width()), 0., 1.),
+        const auto x = std::clamp((point.x() - area.x()) / std::max(1., area.width()), 0., 1.);
+        return {mirror ? 1 - x : x,
                 std::clamp((point.y() - area.y()) / std::max(1., area.height()), 0., 1.)};
     }
     void select(const QPointF &point)
@@ -143,6 +174,8 @@ private:
         }
     }
     QImage image;
+    QJsonObject result;
+    QRectF inferenceRegion;
     QPointF anchor;
     bool dragging = false;
 };
@@ -271,23 +304,65 @@ double invertedSignal(const QString &address, double value)
     return 1.0 - value;
 }
 
+enum class VideoSource { None, Camera, File, Shared };
+
+struct DetectionOptions {
+    int confidence = 50, tracking = 50, hands = 2;
+
+    QByteArray packet() const
+    {
+        return QByteArray::number(confidence) + ' ' + QByteArray::number(tracking) + ' ' + QByteArray::number(hands);
+    }
+};
+
 class Window : public QWidget {
 public:
     Window()
     {
-        setWindowTitle("MP_OSC");
+        setWindowTitle(QStringLiteral(MPOSC_APP_NAME));
         const QSettings settings;
         resize(1120, 690);
         restoreGeometry(settings.value("window/geometry").toByteArray());
         auto *layout = new QVBoxLayout(this);
-        auto *source = new QHBoxLayout;
+        layout->setContentsMargins(12, 12, 12, 8);
+        layout->setSpacing(10);
+        installMenus(layout);
+        const auto section = [layout](const QString &name) {
+            auto *box = new QGroupBox(name);
+            box->setObjectName("section");
+            box->setStyleSheet(QStringLiteral(
+                "QGroupBox#section { border:1px solid #495465; border-radius:8px; margin-top:9px; }"
+                "QGroupBox#section::title { subcontrol-origin:margin; left:11px; padding:0 5px; font-weight:600; }"));
+            auto *row = new QHBoxLayout(box);
+            row->setContentsMargins(12, 13, 12, 9);
+            row->setSpacing(8);
+            layout->addWidget(box);
+            return row;
+        };
+        auto *source = section("Video Input");
+        auto *inputModes = new QButtonGroup(this);
+        auto *inputPages = new QStackedWidget;
+        auto *cameraMode = new QPushButton("Camera");
+        auto *fileMode = new QPushButton("Video File");
+        auto *cameraPage = new QWidget;
+        auto *cameraLayout = new QHBoxLayout(cameraPage);
+        cameraLayout->setContentsMargins(0, 0, 0, 0);
+        auto *filePage = new QWidget;
+        auto *fileLayout = new QHBoxLayout(filePage);
+        fileLayout->setContentsMargins(0, 0, 0, 0);
         cameraChoice = new QComboBox;
         for (const auto &device : QMediaDevices::videoInputs()) cameraChoice->addItem(device.description(), device.id());
         const int previousCamera = cameraChoice->findData(settings.value("video/cameraId").toByteArray());
         if (previousCamera >= 0) cameraChoice->setCurrentIndex(previousCamera);
-        auto *startCamera = new QPushButton("Camera");
+        auto *startCamera = new QPushButton("Start camera");
         startCamera->setEnabled(cameraChoice->count() != 0);
-        auto *open = new QPushButton("Open video…");
+        auto *open = new QPushButton("Browse…");
+        auto *fileName = new QLabel("Choose a movie file");
+        fileName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        fileLayout->addWidget(fileName, 1);
+        fileLayout->addWidget(open);
+        cameraLayout->addWidget(cameraChoice, 1);
+        cameraLayout->addWidget(startCamera);
         auto *stop = new QPushButton("Stop");
         faceTracking = new QPushButton("Face");
         handTracking = new QPushButton("Hands");
@@ -306,38 +381,95 @@ public:
         faceTracking->setChecked(previousTracking & 4);
         handTracking->setChecked(previousTracking & 2);
         bodyTracking->setChecked(previousTracking & 8);
-        for (auto *w : QList<QWidget *>{cameraChoice, startCamera, open, stop, faceTracking, handTracking, bodyTracking})
-            source->addWidget(w);
-        auto *about = new QPushButton("About");
-        about->setIcon(QApplication::windowIcon());
-        source->addWidget(about);
-        connect(about, &QPushButton::clicked, this, [this] {
-            QMessageBox dialog(this);
-            dialog.setWindowTitle("About MP_OSC");
-            dialog.setIconPixmap(QApplication::windowIcon().pixmap(96, 96));
-            dialog.setText(QStringLiteral("<h2>MP_OSC</h2><p>Motion Processing OSC</p>"));
-            dialog.setInformativeText("Turn movement into live OSC controls.\nBuilt by Pixel Stereo.");
-            dialog.setStandardButtons(QMessageBox::Ok);
-            dialog.exec();
+        const auto addInputMode = [&](QPushButton *mode, QWidget *page) {
+            styleToggle(mode);
+            inputModes->addButton(mode, inputPages->addWidget(page));
+            source->addWidget(mode);
+        };
+        addInputMode(cameraMode, cameraPage);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+#ifdef Q_OS_MACOS
+        const auto sharedLabel = QStringLiteral("Syphon");
+        sharedFlip = settings.value("video/sharedFlip", true).toBool();
+#else
+        const auto sharedLabel = QStringLiteral("Spout");
+        sharedFlip = settings.value("video/sharedFlip", false).toBool();
+#endif
+        auto *sharedMode = new QPushButton(sharedLabel);
+        auto *sharedPage = new QWidget;
+        auto *sharedLayout = new QHBoxLayout(sharedPage);
+        sharedLayout->setContentsMargins(0, 0, 0, 0);
+        auto *sharedName = new QLabel("Select a running sender");
+        sharedName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto *sharedButton = new QPushButton("Choose sender…");
+        sharedLayout->addWidget(sharedName, 1);
+        sharedLayout->addWidget(sharedButton);
+        addInputMode(sharedMode, sharedPage);
+        connect(sharedButton, &QPushButton::clicked, this, [this, sharedButton, sharedLabel, sharedName] {
+            QMenu menu;
+            for (const auto &sender : sharedSenders()) {
+                auto *action = menu.addAction(sender.label);
+                action->setData(sender.id);
+            }
+            if (menu.isEmpty()) menu.addAction("No senders found")->setEnabled(false);
+            menu.addSeparator();
+            auto *flip = menu.addAction("Flip vertically");
+            flip->setCheckable(true);
+            flip->setChecked(sharedFlip);
+            const auto *choice = menu.exec(sharedButton->mapToGlobal(QPoint(0, sharedButton->height())));
+            if (!choice) return;
+            if (choice == flip) {
+                sharedFlip = flip->isChecked();
+                return;
+            }
+            auto receiver = openSharedSender(choice->data().toString());
+            if (!receiver) {
+                status->setText(QStringLiteral("Could not open %1 sender").arg(sharedLabel));
+                return;
+            }
+            stopSource();
+            sharedInput = std::move(receiver);
+            videoSource = VideoSource::Shared;
+            sharedName->setText(choice->text());
+            status->setText(QStringLiteral("Waiting for %1 · %2").arg(sharedLabel, choice->text()));
         });
-        layout->addLayout(source);
+#endif
+        addInputMode(fileMode, filePage);
+        cameraMode->setChecked(true);
+        connect(inputModes, &QButtonGroup::idClicked, inputPages, &QStackedWidget::setCurrentIndex);
+        source->addSpacing(8);
+        source->addWidget(inputPages, 1);
+        source->addWidget(stop);
 
-        auto *videoBar = new QHBoxLayout;
-        auto *savePreset = new QPushButton("Save .mposc…");
-        auto *loadPreset = new QPushButton("Open .mposc…");
-        videoBar->addWidget(savePreset);
-        videoBar->addWidget(loadPreset);
-        connect(savePreset, &QPushButton::clicked, this, [this] { saveConfiguration(); });
-        connect(loadPreset, &QPushButton::clicked, this, [this] { loadConfiguration(); });
-        auto *roi = new QPushButton("Draw ROI");
-        roi->setCheckable(true);
-        auto *resetRoi = new QPushButton("Reset ROI");
-        videoBar->addWidget(roi);
-        videoBar->addWidget(resetRoi);
-        videoBar->addStretch();
-        resolution = new QLabel("No video frame");
-        videoBar->addWidget(resolution);
-        layout->addLayout(videoBar);
+        auto *detection = section("Detection");
+        for (auto *button : {faceTracking, handTracking, bodyTracking}) detection->addWidget(button);
+        detection->addSpacing(8);
+        const auto field = [&](const QString &label, const QString &tip, int max, int min,
+                               int DetectionOptions::*member, int scale) {
+            auto *slider = new SliderField;
+            slider->setRange(double(min) / scale, double(max) / scale);
+            slider->setDecimals(scale == 1 ? 0 : 2);
+            slider->setSingleStep(scale == 1 ? 1 : .01);
+            slider->setMinimumWidth(78);
+            slider->setMaximumWidth(130);
+            slider->setAccessibleName(label);
+            slider->setToolTip(tip);
+            detection->addWidget(new QLabel(label));
+            detection->addWidget(slider, 1);
+            connect(slider, &SliderField::editingFinished, this, [this, member, scale](double value) {
+                detectionOptions.*member = qRound(value * scale);
+            });
+            return slider;
+        };
+        minDetection = field("Min detection", "Confidence needed to acquire a new subject.", 100, 0,
+                             &DetectionOptions::confidence, 100);
+        minTracking = field("Min tracking", "Confidence needed to keep tracking between frames.", 100, 0,
+                            &DetectionOptions::tracking, 100);
+        maxHands = field("Max hands", "Maximum simultaneous hand detections.", 2, 1,
+                         &DetectionOptions::hands, 1);
+        maxHands->setEnabled(handTracking->isChecked());
+        connect(handTracking, &QPushButton::toggled, maxHands, &QWidget::setEnabled);
+        loadDetectionOptions(settings);
 
         auto *oscBar = new QHBoxLayout;
         destinations = new QLineEdit(settings.value("destinations", "127.0.0.1:5000").toString());
@@ -352,8 +484,41 @@ public:
         split = new QSplitter;
         picture = new VideoPreview;
         const QRectF fullFrame(0, 0, 1, 1);
-        const auto previousRoi = settings.value("video/roi", fullFrame).toRectF().intersected(fullFrame);
-        if (!previousRoi.isEmpty()) picture->roi = previousRoi;
+        const auto savedRoi = settings.value("video/roi", fullFrame).toRectF().intersected(fullFrame);
+        if (!savedRoi.isEmpty()) picture->roi = savedRoi;
+        auto *previewPanel = new QWidget;
+        auto *previewLayout = new QVBoxLayout(previewPanel);
+        previewLayout->setContentsMargins(0, 0, 0, 0);
+        previewLayout->setSpacing(7);
+        previewLayout->addWidget(picture, 1);
+        auto *previewTools = new QHBoxLayout;
+        auto *roi = new QPushButton("Draw ROI");
+        auto *resetRoi = new QPushButton("Reset ROI");
+        auto *mirror = new QPushButton("Mirror");
+        auto *overlay = new QPushButton("Landmarks");
+        for (auto *button : {roi, mirror, overlay}) styleToggle(button);
+        mirror->setToolTip("Mirror the preview only. OSC coordinates stay unchanged.");
+        overlay->setToolTip("Show landmarks and skeletons on the preview.");
+        mirror->setChecked(settings.value("window/mirror", false).toBool());
+        overlay->setChecked(settings.value("window/landmarks", true).toBool());
+        picture->mirror = mirror->isChecked();
+        picture->showLandmarks = overlay->isChecked();
+        previewMirror = mirror;
+        previewLandmarks = overlay;
+        connect(mirror, &QPushButton::toggled, picture, [this](bool on) { picture->mirror = on; picture->update(); });
+        connect(overlay, &QPushButton::toggled, picture, [this](bool on) { picture->showLandmarks = on; picture->update(); });
+        previewTools->addWidget(roi);
+        previewTools->addWidget(resetRoi);
+        previewTools->addStretch();
+        previewTools->addWidget(mirror);
+        previewTools->addWidget(overlay);
+        previewLayout->addLayout(previewTools);
+        resolution = new QLabel("No video frame");
+        telemetry = new QLabel("Waiting for input");
+        resolution->setStyleSheet("color:#a0acbe;");
+        telemetry->setStyleSheet("color:#a0acbe;");
+        previewLayout->addWidget(resolution);
+        previewLayout->addWidget(telemetry);
         connect(roi, &QPushButton::toggled, picture, [this](bool enabled) {
             picture->editRoi = enabled;
             picture->setCursor(enabled ? Qt::CrossCursor : Qt::ArrowCursor);
@@ -365,7 +530,7 @@ public:
         });
         picture->setMinimumWidth(250);
         picture->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-        split->addWidget(picture);
+        split->addWidget(previewPanel);
         auto *right = new QWidget;
         auto *controls = new QVBoxLayout(right);
         search = new QLineEdit;
@@ -427,20 +592,12 @@ public:
         player.setVideoSink(&fileSink);
         player.setLoops(QMediaPlayer::Infinite);
 
-        auto receiveFrame = [this](const QVideoFrame &frame) {
-            if (!running || !frame.isValid()) return;
-            latest = frame.toImage();
-            if (latest.isNull()) return;
-            if (latest.size() != sourceSize) {
-                sourceSize = latest.size();
-                resolution->setText(QStringLiteral("%1 × %2 px (%3 pixels)")
-                    .arg(sourceSize.width()).arg(sourceSize.height())
-                    .arg(locale().toString(qint64(sourceSize.width()) * sourceSize.height())));
-            }
-            if (!ready) showFrame(latest);
-        };
-        connect(&cameraSink, &QVideoSink::videoFrameChanged, this, receiveFrame);
-        connect(&fileSink, &QVideoSink::videoFrameChanged, this, receiveFrame);
+        connect(&cameraSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+            if (videoSource == VideoSource::Camera && frame.isValid()) receiveFrame(frame.toImage());
+        });
+        connect(&fileSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+            if (videoSource == VideoSource::File && frame.isValid()) receiveFrame(frame.toImage());
+        });
         auto openCamera = [this] {
             const auto devices = QMediaDevices::videoInputs();
             const auto id = cameraChoice->currentData().toByteArray();
@@ -462,7 +619,7 @@ public:
                         status->setText(error);
                     });
                     capture.setCamera(camera.get());
-                    running = true;
+                    videoSource = VideoSource::Camera;
                     camera->start();
                     return;
                 }
@@ -481,17 +638,18 @@ public:
                 status->setText("Camera permission denied");
             }
         });
-        connect(open, &QPushButton::clicked, this, [this] {
+        connect(open, &QPushButton::clicked, this, [this, fileName] {
             QSettings settings;
             const auto path = QFileDialog::getOpenFileName(this, "Open video", settings.value("video/lastDirectory").toString());
             if (path.isEmpty()) return;
             settings.setValue("video/lastDirectory", QFileInfo(path).absolutePath());
+            fileName->setText(QFileInfo(path).fileName());
             stopSource();
-            running = true;
+            videoSource = VideoSource::File;
             player.setSource(QUrl::fromLocalFile(path));
             player.play();
         });
-        connect(stop, &QPushButton::clicked, this, [this] { stopSource(); picture->showFrame({}); });
+        connect(stop, &QPushButton::clicked, this, [this] { stopSource(); });
         connect(&player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &error) { status->setText(error); });
         connect(search, &QLineEdit::textChanged, this, [this](const QString &text) {
             query = text;
@@ -518,13 +676,16 @@ public:
                         status->setText(entry.value().toString());
                 }
                 if (!active) continue;
-                const QImage annotated = QImage::fromData(QByteArray::fromBase64(result.value("preview_jpeg").toString().toLatin1()));
-                if (!annotated.isNull()) {
-                    QPainter painter(&submittedSource);
-                    painter.drawImage(submittedRoi, annotated);
+                const bool current = submittedMask == trackingMask() && submittedOptions == detectionOptions.packet();
+                const QRectF region(double(submittedRoi.x()) / submittedSource.width(),
+                                    double(submittedRoi.y()) / submittedSource.height(),
+                                    double(submittedRoi.width()) / submittedSource.width(),
+                                    double(submittedRoi.height()) / submittedSource.height());
+                picture->showFrame(submittedSource, current ? result : QJsonObject(), region);
+                if (current) {
+                    updateTelemetry(result);
+                    updateSignals(result);
                 }
-                showFrame(submittedSource);
-                if (submittedMask == trackingMask()) updateSignals(result);
             }
         });
         connect(&worker, &QProcess::errorOccurred, this, [this] { status->setText(worker.errorString()); });
@@ -547,16 +708,39 @@ public:
         startWorker();
         clock.start();
         connect(&timer, &QTimer::timeout, this, [this] {
-            if (!ready || busy || latest.isNull()) return;
+            if (busy) return;
+            if (sharedInput) {
+                auto frame = sharedInput->frame();
+                if (sharedFlip && !frame.isNull()) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+                    frame.flip(Qt::Vertical);
+#else
+                    frame = frame.mirrored(false, true);
+#endif
+                }
+                receiveFrame(std::move(frame));
+            }
+            if (latest.isNull()) return;
+            if (picture->isDrawing()) {
+                picture->showFrame(latest);
+                return;
+            }
+            if (!ready) return;
             submittedSource = std::exchange(latest, QImage()).convertToFormat(QImage::Format_RGBA8888);
             const auto roi = picture->roi;
             const int width = submittedSource.width(), height = submittedSource.height();
             submittedRoi = QRectF(roi.x() * width, roi.y() * height, roi.width() * width, roi.height() * height)
                                .toAlignedRect().intersected(submittedSource.rect());
             submitted = submittedRoi == submittedSource.rect() ? submittedSource : submittedSource.copy(submittedRoi);
+            if (previousRoi != submittedRoi) {
+                previousRoi = submittedRoi;
+                ++sourceGeneration;
+            }
             submittedMask = trackingMask();
+            submittedOptions = detectionOptions.packet();
             QByteArray packet = QByteArray::number(submitted.width()) + ' ' + QByteArray::number(submitted.height()) +
-                                ' ' + QByteArray::number(submittedMask | 4096) + '\n';
+                                ' ' + QByteArray::number(submittedMask) + ' ' + submittedOptions +
+                                ' ' + QByteArray::number(sourceGeneration) + '\n';
             for (int y = 0; y < submitted.height(); ++y)
                 packet.append(reinterpret_cast<const char *>(submitted.constScanLine(y)), submitted.width() * 4);
             active = busy = true;
@@ -575,6 +759,12 @@ public:
         if (cameraChoice->currentIndex() >= 0)
             settings.setValue("video/cameraId", cameraChoice->currentData());
         settings.setValue("video/trackingMask", trackingMask());
+        settings.setValue("video/sharedFlip", sharedFlip);
+        settings.setValue("video/minDetection", detectionOptions.confidence);
+        settings.setValue("video/minTracking", detectionOptions.tracking);
+        settings.setValue("video/maxHands", detectionOptions.hands);
+        settings.setValue("window/mirror", previewMirror->isChecked());
+        settings.setValue("window/landmarks", previewLandmarks->isChecked());
         settings.setValue("video/roi", picture->roi);
         settings.setValue("osc/send", send->isChecked());
         settings.setValue("destinations", destinations->text());
@@ -594,6 +784,87 @@ public:
     }
 
 private:
+    void installMenus(QVBoxLayout *layout)
+    {
+        auto *bar = new QMenuBar(this);
+        layout->setMenuBar(bar);
+        auto *file = bar->addMenu("&File");
+        auto *open = file->addAction("&Open…");
+        open->setShortcut(QKeySequence::Open);
+        connect(open, &QAction::triggered, this, [this] { loadConfiguration(); });
+        auto *recent = file->addMenu("Open &Recent");
+        connect(recent, &QMenu::aboutToShow, this, [this, recent] {
+            recent->clear();
+            const auto paths = QSettings().value("recentConfigurations").toStringList();
+            for (const auto &path : paths) {
+                auto *action = recent->addAction(QFileInfo(path).fileName());
+                action->setToolTip(path);
+                action->setEnabled(QFileInfo::exists(path));
+                connect(action, &QAction::triggered, this, [this, path] { loadConfiguration(path); });
+            }
+            if (paths.isEmpty()) recent->addAction("No recent configurations")->setEnabled(false);
+        });
+        file->addSeparator();
+        auto *save = file->addAction("&Save");
+        save->setShortcut(QKeySequence::Save);
+        connect(save, &QAction::triggered, this, [this] { saveConfiguration(false); });
+        auto *saveAs = file->addAction("Save &As…");
+        saveAs->setShortcut(QKeySequence::SaveAs);
+        connect(saveAs, &QAction::triggered, this, [this] { saveConfiguration(true); });
+
+        auto *about = bar->addMenu("&Help")->addAction("About MpOsc");
+        about->setMenuRole(QAction::AboutRole);
+        connect(about, &QAction::triggered, this, [this] {
+            QMessageBox dialog(this);
+            dialog.setWindowTitle("About MpOsc");
+            dialog.setIconPixmap(QApplication::windowIcon().pixmap(96, 96));
+            dialog.setText(QStringLiteral("<h2>MpOsc</h2><p>Motion Processing OSC · %1</p>")
+                               .arg(QApplication::applicationVersion()));
+            dialog.setInformativeText("Turn movement into live OSC controls.\nBuilt by Pixel Stereo.");
+            dialog.setStandardButtons(QMessageBox::Ok);
+            dialog.exec();
+        });
+    }
+
+    void rememberConfiguration(const QString &path)
+    {
+        configurationPath = QFileInfo(path).absoluteFilePath();
+        setWindowTitle(QStringLiteral(MPOSC_APP_NAME) + " — " + QFileInfo(path).completeBaseName());
+        QSettings settings;
+        auto recent = settings.value("recentConfigurations").toStringList();
+        recent.removeAll(configurationPath);
+        recent.prepend(configurationPath);
+        while (recent.size() > 8) recent.removeLast();
+        settings.setValue("recentConfigurations", recent);
+    }
+
+    void loadDetectionOptions(const QSettings &settings)
+    {
+        detectionOptions.confidence = std::clamp(settings.value("video/minDetection", 50).toInt(), 0, 100);
+        detectionOptions.tracking = std::clamp(settings.value("video/minTracking", 50).toInt(), 0, 100);
+        detectionOptions.hands = std::clamp(settings.value("video/maxHands", 2).toInt(), 1, 2);
+        minDetection->setValue(detectionOptions.confidence / 100.0);
+        minTracking->setValue(detectionOptions.tracking / 100.0);
+        maxHands->setValue(detectionOptions.hands);
+    }
+
+    void updateTelemetry(const QJsonObject &result)
+    {
+        if (!inferenceClock.isValid()) inferenceClock.start();
+        ++inferenceFrames;
+        if (inferenceClock.elapsed() >= 750) {
+            inferenceRate = inferenceFrames * 1000.0 / inferenceClock.restart();
+            inferenceFrames = 0;
+        }
+        const auto rate = inferenceRate > 0 ? QString::number(inferenceRate, 'f', 1) + " fps" : QStringLiteral("— fps");
+        const auto ms = result.value("inference_ms");
+        const auto duration = ms.isDouble() ? QString::number(ms.toDouble(), 'f', 1) + " ms" : QStringLiteral("— ms");
+        QStringList labels{rate, duration};
+        for (const auto &entry : {std::pair{"face", "Face"}, {"hands", "Hands"}, {"pose", "Body"}})
+            if (result.contains(entry.first)) labels << QStringLiteral("%1 %2").arg(entry.second).arg(result.value(entry.first).toArray().size());
+        telemetry->setText(labels.join(QStringLiteral("  ·  ")));
+    }
+
     void restoreSignalRows(const QSettings &settings)
     {
         for (const auto &key : settings.allKeys()) {
@@ -605,50 +876,53 @@ private:
         }
     }
 
-    void saveConfiguration()
+    void saveConfiguration(bool saveAs)
     {
-        auto path = QFileDialog::getSaveFileName(this, "Save MP_OSC configuration", {}, "MP_OSC (*.mposc)");
+        auto path = configurationPath;
+        if (saveAs || path.isEmpty()) path = QFileDialog::getSaveFileName(this, "Save MpOsc configuration", path, "MpOsc (*.mposc)");
         if (path.isEmpty()) return;
         if (!path.endsWith(".mposc", Qt::CaseInsensitive)) path += ".mposc";
         QTemporaryDir staging;
         if (!staging.isValid()) {
-            QMessageBox::warning(this, "MP_OSC", "Could not create a temporary configuration file.");
+            QMessageBox::warning(this, "MpOsc", "Could not create a temporary configuration file.");
             return;
         }
         QSettings local;
         storeSettings(local);
         QSettings snapshot(staging.filePath("snapshot.ini"), QSettings::IniFormat);
-        for (const auto &key : local.allKeys()) snapshot.setValue(key, local.value(key));
+        for (const auto &key : local.allKeys())
+            if (key != "recentConfigurations") snapshot.setValue(key, local.value(key));
         snapshot.setValue("formatVersion", 1);
         snapshot.sync();
         QFile data(snapshot.fileName());
         QSaveFile file(path);
         if (snapshot.status() != QSettings::NoError || !data.open(QIODevice::ReadOnly) || !file.open(QIODevice::WriteOnly)) {
-            QMessageBox::warning(this, "MP_OSC", "Could not save the configuration.");
+            QMessageBox::warning(this, "MpOsc", "Could not save the configuration.");
             return;
         }
         const auto bytes = data.readAll();
-        if (data.error() != QFileDevice::NoError || file.write(bytes) != bytes.size() || !file.commit())
-            QMessageBox::warning(this, "MP_OSC", "Could not save the configuration.");
+        if (data.error() != QFileDevice::NoError || file.write(bytes) != bytes.size() || !file.commit()) {
+            QMessageBox::warning(this, "MpOsc", "Could not save the configuration.");
+            return;
+        }
+        rememberConfiguration(path);
+        status->setText("Configuration saved");
     }
 
-    void loadConfiguration()
+    void loadConfiguration(QString path = {})
     {
-        const auto path = QFileDialog::getOpenFileName(this, "Open MP_OSC configuration", {}, "MP_OSC (*.mposc)");
+        if (path.isEmpty()) path = QFileDialog::getOpenFileName(this, "Open MpOsc configuration", configurationPath, "MpOsc (*.mposc)");
         if (path.isEmpty()) return;
         const QSettings snapshot(path, QSettings::IniFormat);
         if (snapshot.value("formatVersion").toInt() != 1 || snapshot.status() != QSettings::NoError) {
-            QMessageBox::warning(this, "MP_OSC", "This file is not a supported MP_OSC configuration.");
+            QMessageBox::warning(this, "MpOsc", "This file is not a supported MpOsc configuration.");
             return;
         }
         stopSource();
-        picture->showFrame({});
-        resolution->setText("No video frame");
-        sourceSize = {};
         QSettings local;
         for (const auto &group : {"signals", "video", "window", "osc"}) local.remove(group);
         for (const auto &key : snapshot.allKeys()) {
-            if (key != "formatVersion") local.setValue(key, snapshot.value(key));
+            if (key != "formatVersion" && key != "recentConfigurations") local.setValue(key, snapshot.value(key));
         }
         local.sync();
         rows.clear();
@@ -659,6 +933,11 @@ private:
         split->restoreState(local.value("window/split").toByteArray());
         const int camera = cameraChoice->findData(local.value("video/cameraId").toByteArray());
         cameraChoice->setCurrentIndex(camera >= 0 ? camera : (cameraChoice->count() > 0 ? 0 : -1));
+#ifdef Q_OS_MACOS
+        sharedFlip = local.value("video/sharedFlip", true).toBool();
+#else
+        sharedFlip = local.value("video/sharedFlip", false).toBool();
+#endif
         const int mask = local.value("video/trackingMask", 4).toInt();
         faceTracking->setChecked(mask & 4);
         handTracking->setChecked(mask & 2);
@@ -669,7 +948,11 @@ private:
         destinations->setText(local.value("destinations", "127.0.0.1:5000").toString());
         send->setChecked(local.value("osc/send", false).toBool());
         search->setText(local.value("window/search").toString());
+        previewMirror->setChecked(local.value("window/mirror", false).toBool());
+        previewLandmarks->setChecked(local.value("window/landmarks", true).toBool());
+        loadDetectionOptions(local);
         restoreSignalRows(local);
+        rememberConfiguration(path);
         status->setText("Configuration loaded");
     }
 
@@ -695,13 +978,35 @@ private:
         bool initialized = false, sent = false;
     };
 
+    void receiveFrame(QImage frame)
+    {
+        if (frame.isNull()) return;
+        latest = std::move(frame);
+        if (latest.size() != sourceSize) {
+            sourceSize = latest.size();
+            resolution->setText(QStringLiteral("%1 × %2 px (%3 pixels)")
+                .arg(sourceSize.width()).arg(sourceSize.height())
+                .arg(locale().toString(qint64(sourceSize.width()) * sourceSize.height())));
+        }
+        if (!ready) showFrame(latest);
+    }
+
     void stopSource()
     {
-        running = false;
+        videoSource = VideoSource::None;
+        sharedInput.reset();
         if (camera) camera->stop();
         player.stop();
         latest = {};
         active = false;
+        sourceSize = {};
+        resolution->setText("No video frame");
+        telemetry->setText("Waiting for input");
+        inferenceClock.invalidate();
+        inferenceRate = 0;
+        inferenceFrames = 0;
+        ++sourceGeneration;
+        picture->showFrame({});
         for (auto &row : rows) row.initialized = row.sent = false;
     }
 
@@ -918,12 +1223,15 @@ private:
 
     QComboBox *cameraChoice;
     QPushButton *faceTracking, *handTracking, *bodyTracking;
-    QLabel *resolution;
+    QLabel *resolution, *telemetry;
     QSize sourceSize;
     QByteArray workerLog;
     bool workerRetried = false, shuttingDown = false;
     QLineEdit *destinations, *search;
-    QPushButton *send;
+    QPushButton *send, *previewMirror, *previewLandmarks;
+    SliderField *minDetection, *minTracking, *maxHands;
+    DetectionOptions detectionOptions;
+    QString configurationPath;
     QSplitter *split;
     VideoPreview *picture;
     QLabel *status;
@@ -934,22 +1242,29 @@ private:
     QMediaPlayer player;
     QVideoSink cameraSink, fileSink;
     std::unique_ptr<QCamera> camera;
+    std::unique_ptr<SharedInput> sharedInput;
+    VideoSource videoSource = VideoSource::None;
     QProcess worker;
     QUdpSocket udp;
     QTimer timer;
-    QElapsedTimer clock;
+    QElapsedTimer clock, inferenceClock;
+    double inferenceRate = 0;
+    int inferenceFrames = 0;
     QImage latest, submitted, submittedSource;
-    QRect submittedRoi;
+    QRect submittedRoi, previousRoi;
+    QByteArray submittedOptions;
+    int sourceGeneration = 0;
     int submittedMask = 0;
-    bool ready = false, busy = false, active = false, running = false;
+    bool ready = false, busy = false, active = false, sharedFlip = false;
 };
 } // namespace
 
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    app.setApplicationName("MP_OSC");
-    app.setWindowIcon(QIcon(":/assets/MP_OSC.png"));
+    app.setApplicationName("MpOsc");
+    app.setApplicationVersion(QStringLiteral(MPOSC_VERSION));
+    app.setWindowIcon(QIcon(":/assets/MpOsc.png"));
     app.setOrganizationName("PixelStereo");
     auto palette = app.palette();
     palette.setColor(QPalette::Highlight, QColor("#8394b3"));
@@ -960,15 +1275,26 @@ int main(int argc, char **argv)
         QProcess worker;
         worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
         if (!worker.waitForStarted()) return 1;
-        worker.write(QByteArray("128 128 4110\n") + QByteArray(128 * 128 * 4, '\0'));
+        const QByteArray pixels(128 * 128 * 4, '\0');
+        worker.write(QByteArray("128 128 4110 40 60 1 0\n") + pixels);
+        worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
+        worker.write(QByteArray("128 128 14 50 50 2 1\n") + pixels);
         worker.closeWriteChannel();
         if (!worker.waitForFinished(60000)) return 2;
         const auto lines = worker.readAllStandardOutput().trimmed().split('\n');
-        if (lines.size() != 2 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) return 3;
+        if (lines.size() != 4 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) return 3;
         const auto frame = QJsonDocument::fromJson(lines[1]).object();
         if (!frame.contains("face") || !frame.contains("hands") || !frame.contains("pose") || !frame.contains("preview_jpeg")) {
             qCritical().noquote() << lines[1];
             return 4;
+        }
+        for (int i = 2; i < 4; ++i) {
+            const auto sample = QJsonDocument::fromJson(lines[i]).object();
+            if (!sample.value("inference_ms").isDouble() || !sample.contains("face") ||
+                !sample.contains("hands") || !sample.contains("pose") || sample.contains("preview_jpeg")) {
+                qCritical().noquote() << lines[i];
+                return 13;
+            }
         }
         QList<Destination> destinations;
         if (!parseDestinations("127.0.0.1:5000 10.0.0.2:9999", destinations) || destinations.size() != 2) return 5;
@@ -1000,6 +1326,11 @@ int main(int argc, char **argv)
             return 12;
         qInfo("Packaged inference, annotations, head rotation, inversion and two OSC destinations passed");
         return 0;
+    }
+    QSettings settings;
+    if (settings.allKeys().isEmpty()) {
+        const QSettings legacy("PixelStereo", "MP_OSC");
+        for (const auto &key : legacy.allKeys()) settings.setValue(key, legacy.value(key));
     }
     Window window;
     window.show();

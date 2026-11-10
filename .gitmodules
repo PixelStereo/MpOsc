@@ -1,0 +1,7 @@
+[submodule "third_party/syphon"]
+	path = third_party/syphon
+	url = https://github.com/Syphon/Syphon-Framework.git
+[submodule "third_party/spout2"]
+	path = third_party/spout2
+	url = https://github.com/leadedge/Spout2.git
+	shallow = true
