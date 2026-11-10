@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QtMath>
 #include <QPermissions>
 #include <QMouseEvent>
 #include <QPainter>
@@ -28,6 +29,48 @@
 #include <cmath>
 
 namespace {
+QIcon signalPinIcon(bool pinned)
+{
+    QPixmap icon(32, 32);
+    icon.setDevicePixelRatio(2);
+    icon.fill(Qt::transparent);
+    QPainter painter(&icon);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.translate(8, 8);
+    painter.rotate(pinned ? 0 : 38);
+    const QColor color(pinned ? "#8394b3" : "#a5a5af");
+    painter.setPen(QPen(color, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(pinned ? QBrush(color) : QBrush(Qt::NoBrush));
+    QPainterPath head;
+    head.moveTo(-3, -5);
+    head.lineTo(3, -5);
+    head.lineTo(2, -1);
+    head.lineTo(4, 1);
+    head.lineTo(-4, 1);
+    head.lineTo(-2, -1);
+    head.closeSubpath();
+    painter.drawPath(head);
+    painter.drawLine(QPointF(0, 1), QPointF(0, 6));
+    painter.end();
+    return QIcon(icon);
+}
+
+class SignalItem final : public QTreeWidgetItem
+{
+public:
+    SignalItem(QTreeWidget *tree, const QString &address) : QTreeWidgetItem(tree)
+    {
+        setData(0, Qt::UserRole, address);
+        setData(0, Qt::AccessibleTextRole, address);
+        setSizeHint(0, QSize(0, 26));
+    }
+
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        return data(0, Qt::UserRole).toString() < other.data(0, Qt::UserRole).toString();
+    }
+};
+
 class VideoPreview final : public QWidget
 {
 public:
@@ -142,6 +185,33 @@ QString pythonExecutable(const QString &root)
 #endif
 }
 
+void addHeadRotation(const QJsonArray &matrix, QMap<QString, double> &values)
+{
+    if (matrix.size() != 16) return;
+    double r[3][3];
+    // The worker sends a row-major transform. Normalize its basis vectors to remove scale.
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            const auto value = matrix.at(row * 4 + column);
+            if (!value.isDouble() || !std::isfinite(value.toDouble())) return;
+            r[row][column] = value.toDouble();
+        }
+        const auto length = std::hypot(r[0][column], r[1][column], r[2][column]);
+        if (length <= 1e-9) return;
+        for (int row = 0; row < 3; ++row) r[row][column] /= length;
+    }
+
+    // Decompose R = Ry(yaw) * Rx(pitch) * Rz(roll). At the singularity use zero roll.
+    const double cosPitch = std::hypot(r[0][2], r[2][2]);
+    const double pitch = std::atan2(-r[1][2], cosPitch);
+    const bool singular = cosPitch < 1e-6;
+    const double yaw = singular ? std::atan2(-r[2][0], r[0][0]) : std::atan2(r[0][2], r[2][2]);
+    const double roll = singular ? 0.0 : std::atan2(r[1][0], r[1][1]);
+    values["/face/head/yaw"] = qRadiansToDegrees(yaw);
+    values["/face/head/pitch"] = qRadiansToDegrees(pitch);
+    values["/face/head/roll"] = qRadiansToDegrees(roll);
+}
+
 QMap<QString, double> signalsFor(const QJsonObject &frame)
 {
     QMap<QString, double> values;
@@ -149,6 +219,7 @@ QMap<QString, double> signalsFor(const QJsonObject &frame)
     if (frame.contains("face")) values["/face/present"] = !face.isEmpty();
     if (!face.isEmpty()) {
         const auto detection = face.first().toObject();
+        addHeadRotation(detection.value("matrix").toArray(), values);
         const auto expressions = detection.value("expressions").toObject();
         for (auto i = expressions.begin(); i != expressions.end(); ++i)
             values["/face/" + i.key()] = i.value().toDouble();
@@ -293,20 +364,36 @@ public:
         connect(disableAll, &QPushButton::clicked, this, [this] {
             for (auto &row : rows) row.signal->setChecked(false);
         });
-        table = new QTreeWidget;
-        table->setRootIsDecorated(false);
-        table->setSelectionMode(QAbstractItemView::NoSelection);
-        table->setStyleSheet(QStringLiteral(
-            "QTreeWidget { selection-background-color:#8394b3; selection-color:#1a1a1d; }"));
-        table->setHeaderLabels({"Signal / OSC address", "Value", "Attack", "Release"});
-        table->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-        table->setColumnWidth(1, 90);
-        for (int column : {2, 3}) table->setColumnWidth(column, 125);
-        table->setSortingEnabled(true);
-        table->sortItems(0, Qt::AscendingOrder);
-        table->header()->setSortIndicatorShown(false);
-        table->header()->setSectionsClickable(false);
-        controls->addWidget(table);
+        const auto makeTable = [] {
+            auto *view = new QTreeWidget;
+            view->setRootIsDecorated(false);
+            view->setSelectionMode(QAbstractItemView::NoSelection);
+            view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+            view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+            view->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+            view->setHeaderLabels({"Signal / OSC address", "Value", "Attack", "Release"});
+            view->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+            view->setColumnWidth(1, 90);
+            for (int column : {2, 3}) view->setColumnWidth(column, 125);
+            view->setSortingEnabled(true);
+            view->sortItems(0, Qt::AscendingOrder);
+            view->header()->setSortIndicatorShown(false);
+            view->header()->setSectionsClickable(false);
+            return view;
+        };
+        pinnedTable = makeTable();
+        table = makeTable();
+        pinnedTable->hide();
+        controls->addWidget(pinnedTable);
+        controls->addWidget(table, 1);
+        for (auto *view : {table, pinnedTable}) {
+            auto *other = view == table ? pinnedTable : table;
+            connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
+                    other->horizontalScrollBar(), &QScrollBar::setValue);
+            connect(view->header(), &QHeaderView::sectionResized, other, [other](int column, int, int width) {
+                if (column != 0 && other->columnWidth(column) != width) other->setColumnWidth(column, width);
+            });
+        }
         split->addWidget(right);
         if (!split->restoreState(settings.value("window/split").toByteArray()))
             split->setSizes({520, 600});
@@ -385,7 +472,8 @@ public:
         connect(&player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &error) { status->setText(error); });
         connect(search, &QLineEdit::textChanged, this, [this](const QString &text) {
             query = text;
-            for (auto i = rows.begin(); i != rows.end(); ++i) i->item->setHidden(!i.key().contains(query, Qt::CaseInsensitive));
+            for (auto i = rows.begin(); i != rows.end(); ++i)
+                if (i->item->treeWidget() == table) i->item->setHidden(!i.key().contains(query, Qt::CaseInsensitive));
         });
         connect(destinations, &QLineEdit::editingFinished, this, [this] {
             QSettings().setValue("destinations", destinations->text());
@@ -542,6 +630,8 @@ private:
         local.sync();
         rows.clear();
         table->clear();
+        pinnedTable->clear();
+        resizePinnedTable();
         restoreGeometry(local.value("window/geometry").toByteArray());
         split->restoreState(local.value("window/split").toByteArray());
         const int camera = cameraChoice->findData(local.value("video/cameraId").toByteArray());
@@ -595,46 +685,99 @@ private:
         picture->showFrame(image);
     }
 
+    void resizePinnedTable()
+    {
+        const int count = pinnedTable->topLevelItemCount();
+        pinnedTable->setVisible(count > 0);
+        table->setHeaderHidden(count > 0);
+        if (count > 0) {
+            const int rowHeight = std::max(26, pinnedTable->visualItemRect(pinnedTable->topLevelItem(0)).height());
+            pinnedTable->setFixedHeight(pinnedTable->header()->sizeHint().height() +
+                                       std::min(count, 6) * rowHeight + 2 * pinnedTable->frameWidth() +
+                                       pinnedTable->horizontalScrollBar()->sizeHint().height());
+        }
+    }
+
+    void moveSignal(const QString &address, bool pinned)
+    {
+        auto row = rows.find(address);
+        if (row == rows.end() || (row->item->treeWidget() == pinnedTable) == pinned) return;
+        const auto previous = *row;
+        const int value = previous.meter->value();
+        const auto format = previous.meter->format();
+        const double attack = previous.attack->value();
+        const double release = previous.release->value();
+        delete previous.item;
+        *row = makeRow(address);
+        row->filtered = previous.filtered;
+        row->initialized = previous.initialized;
+        row->sent = previous.sent;
+        row->attack->setValue(attack);
+        row->release->setValue(release);
+        row->meter->setFormat(format);
+        row->meter->setValue(value);
+        resizePinnedTable();
+    }
+
     Row makeRow(const QString &address)
     {
-        auto *item = new QTreeWidgetItem(table);
-        item->setHidden(!address.contains(query, Qt::CaseInsensitive));
         const auto settingsKey = QStringLiteral("signals") + address;
         QSettings settings;
+        const bool pinned = settings.value(settingsKey + "/pinned", false).toBool();
+        auto *view = pinned ? pinnedTable : table;
+        auto *item = new SignalItem(view, address);
+        item->setHidden(!pinned && !address.contains(query, Qt::CaseInsensitive));
         auto *signal = new QPushButton(address);
         signal->setCheckable(true);
         signal->setChecked(settings.value(settingsKey + "/send", false).toBool());
         signal->setStyleSheet(QStringLiteral(
             "QPushButton { background:transparent; color:#e1e1e4; text-align:left;"
             " border:1px solid transparent; border-radius:5px; padding:3px 6px; }"
-            "QPushButton:hover { background:#343439; }"
-            "QPushButton:checked { border-color:#8394b3; }"));
-        auto *nameCell = new QWidget;
+            "QPushButton:hover { background:#343439; }"));
+        auto *nameCell = new QFrame;
+        const auto updateOutline = [nameCell](bool enabled) {
+            nameCell->setStyleSheet(enabled
+                ? QStringLiteral("QFrame { border:1px solid #8394b3; border-radius:5px; }")
+                : QStringLiteral("QFrame { border:1px solid transparent; border-radius:5px; }"));
+        };
+        updateOutline(signal->isChecked());
+        connect(signal, &QPushButton::toggled, nameCell, updateOutline);
         auto *nameLayout = new QHBoxLayout(nameCell);
-        nameLayout->setContentsMargins(0, 0, 0, 0);
-        nameLayout->setSpacing(2);
+        nameLayout->setContentsMargins(1, 1, 1, 1);
+        nameLayout->setSpacing(4);
         auto *pin = new QToolButton;
-        pin->setText(QStringLiteral("📌"));
+        pin->setFixedSize(24, 24);
+        pin->setIconSize(QSize(16, 16));
+        pin->setCursor(Qt::PointingHandCursor);
         pin->setCheckable(true);
         pin->setAutoRaise(true);
-        pin->setStyleSheet(QStringLiteral("QToolButton:checked { background:#8394b3; border-radius:4px; }"));
-        pin->setChecked(settings.value(settingsKey + "/pinned", false).toBool());
-        const auto updatePin = [item, pin, address](bool pinned) {
-            item->setText(0, (pinned ? QStringLiteral("0") : QStringLiteral("1")) + address);
-            pin->setToolTip(pinned ? "Unpin signal" : "Pin signal");
-        };
-        updatePin(pin->isChecked());
-        connect(pin, &QToolButton::toggled, this, [this, updatePin, settingsKey](bool pinned) {
-            updatePin(pinned);
-            table->sortItems(0, Qt::AscendingOrder);
-            QSettings().setValue(settingsKey + "/pinned", pinned);
-        });
-        nameLayout->addWidget(pin);
+        pin->setStyleSheet(QStringLiteral(
+            "QToolButton { border:0; border-radius:4px; }"
+            "QToolButton:hover { background:#343439; }"
+            "QToolButton:checked { background:#282e3b; }"));
+        pin->setChecked(pinned);
+        static const QIcon unpinnedIcon = signalPinIcon(false);
+        static const QIcon pinnedIcon = signalPinIcon(true);
+        pin->setIcon(pinned ? pinnedIcon : unpinnedIcon);
+        pin->setToolTip(pinned ? "Unpin signal" : "Pin signal");
+        pin->setAccessibleName(pin->toolTip());
+        connect(pin, &QToolButton::toggled, this, [this, address, settingsKey](bool enabled) {
+            QSettings().setValue(settingsKey + "/pinned", enabled);
+            moveSignal(address, enabled);
+        }, Qt::QueuedConnection);
+        signal->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        signal->setToolTip(address);
+        nameLayout->addWidget(pin, 0, Qt::AlignVCenter);
         nameLayout->addWidget(signal, 1);
-        table->setItemWidget(item, 0, nameCell);
+        view->setItemWidget(item, 0, nameCell);
 
         auto *meter = new QProgressBar;
-        meter->setRange(0, 1000);
+        if (address.startsWith("/face/head/")) {
+            const int limit = address.endsWith("/pitch") ? 90 : 180;
+            meter->setRange(-limit, limit);
+        } else {
+            meter->setRange(0, 1000);
+        }
         meter->setEnabled(send->isChecked() && signal->isChecked());
         meter->setStyleSheet(QStringLiteral(
             "QProgressBar { background:#1e1e21; color:#e1e1e4; border:1px solid #4b4b51;"
@@ -642,7 +785,7 @@ private:
             "QProgressBar::chunk { background:#8394b3; border-radius:3px; }"
             "QProgressBar:disabled { color:#99999f; }"
             "QProgressBar::chunk:disabled { background:#45454d; }"));
-        table->setItemWidget(item, 1, meter);
+        view->setItemWidget(item, 1, meter);
         connect(signal, &QPushButton::toggled, this, [this, address, settingsKey, meter](bool enabled) {
             rows[address].sent = false;
             meter->setEnabled(send->isChecked() && enabled);
@@ -661,10 +804,12 @@ private:
             connect(field, &SliderField::editingFinished, this, [key](double value) {
                 QSettings().setValue(key, value);
             });
-            table->setItemWidget(item, column, field);
+            view->setItemWidget(item, column, field);
             return field;
         };
-        return {item, meter, signal, addTimeField(2, "/attack"), addTimeField(3, "/release")};
+        auto row = Row{item, meter, signal, addTimeField(2, "/attack"), addTimeField(3, "/release")};
+        if (pinned) resizePinnedTable();
+        return row;
     }
 
     void updateSignals(const QJsonObject &frame)
@@ -680,12 +825,20 @@ private:
         for (auto i = rows.begin(); i != rows.end(); ++i) {
             const bool available = values.contains(i.key());
             const double raw = values.value(i.key());
-            const double tau = raw > i->filtered ? i->attack->value() : i->release->value();
-            i->filtered = !i->initialized || tau == 0 ? raw : i->filtered + (raw - i->filtered) * -std::expm1(-dt / tau);
+            const bool angle = i->meter->minimum() < 0;
+            const bool wraps = angle && i->meter->maximum() == 180;
+            const double difference = raw - i->filtered;
+            const double delta = wraps ? std::remainder(difference, 360.0) : difference;
+            const double tau = delta > 0 ? i->attack->value() : i->release->value();
+            i->filtered = !i->initialized || tau == 0 ? raw : i->filtered + delta * -std::expm1(-dt / tau);
+            if (wraps) i->filtered = std::remainder(i->filtered, 360.0);
             i->initialized = available;
             const double output = i->filtered;
-            i->meter->setValue(qRound(1000 * std::clamp(output, 0.0, 1.0)));
-            i->meter->setFormat(available ? QString::number(output, 'f', 3) : QStringLiteral("—"));
+            i->meter->setValue(qRound(angle
+                ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
+                : 1000 * std::clamp(output, 0.0, 1.0)));
+            const auto text = QString::number(output, 'f', angle ? 1 : 3);
+            i->meter->setFormat(available ? text + (angle ? QStringLiteral("°") : QString()) : QStringLiteral("—"));
             if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
             if (!available && !i->sent) continue;
             const double outgoing = available ? output : 0;
@@ -723,7 +876,7 @@ private:
     QSplitter *split;
     VideoPreview *picture;
     QLabel *status;
-    QTreeWidget *table;
+    QTreeWidget *table, *pinnedTable;
     QMap<QString, Row> rows;
     QString query;
     QMediaCaptureSession capture;
@@ -781,7 +934,15 @@ int main(int argc, char **argv)
             receiver->readDatagram(received.data(), received.size());
             if (received != datagram) return 10;
         }
-        qInfo("Packaged inference, annotations and two OSC destinations passed");
+        // A scaled yaw of 30 degrees with translation verifies matrix layout and units.
+        const QJsonArray matrix{std::sqrt(3.0), 0, 1, 12, 0, 2, 0, -3,
+                                -1, 0, std::sqrt(3.0), -40, 0, 0, 0, 1};
+        const auto head = signalsFor(QJsonObject{{"face", QJsonArray{QJsonObject{{"matrix", matrix}}}}});
+        if (std::abs(head.value("/face/head/yaw") - 30.0) > 1e-6
+            || !head.contains("/face/head/pitch") || std::abs(head.value("/face/head/pitch")) > 1e-6
+            || !head.contains("/face/head/roll") || std::abs(head.value("/face/head/roll")) > 1e-6)
+            return 11;
+        qInfo("Packaged inference, annotations, head rotation and two OSC destinations passed");
         return 0;
     }
     Window window;
