@@ -2,6 +2,10 @@
 
 MP_OSC (MediaPipe OSC / Motion Processing OSC) turns camera or video movement into OSC controls. The Qt desktop app runs MediaPipe locally and ships with the Python runtime and models in the release packages.
 
+## Install
+
+On Windows x64, run `MP_OSC-Windows-x64-Setup.exe` and launch MP_OSC from the Start menu. The installer includes Qt, the Visual C++ runtime, Python, MediaPipe and its models. On an Apple Silicon Mac, extract `MP_OSC-macos-arm64.zip` and move `MP_OSC.app` to Applications.
+
 ## Perform
 
 1. Choose a device and click **Camera**, or open a video file.
@@ -30,4 +34,4 @@ python scripts/setup_mediapipe.py --bundle --directory build/MP_OSC.app/Contents
 
 On Windows with the Visual Studio generator, use `build/Release/mediapipe` as the destination. MediaPipe inference works offline after packaging. On macOS, grant camera access when the system prompts. The macOS CI archives use ad-hoc signing.
 
-GitHub Actions builds macOS Apple Silicon and Windows x64, packages the portable MediaPipe runtime, and runs inference from the extracted archives. Pushing a tag such as `v0.1.0` publishes both ZIPs to GitHub Releases once both checks pass. Linux, Syphon, Spout, NDI and OMT are outside this first version.
+GitHub Actions builds macOS Apple Silicon and Windows x64, packages the portable MediaPipe runtime, and runs inference from the extracted macOS app and the installed Windows app. Pushing a tag such as `v0.1.0` publishes the macOS ZIP and Windows installer to GitHub Releases once both checks pass. Linux, Syphon, Spout, NDI and OMT are outside this first version.

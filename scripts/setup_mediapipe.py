@@ -46,7 +46,7 @@ def bundle_python(folder):
     if runtime.exists():
         raise RuntimeError(f"Bundle destination already contains Python: {runtime}")
     uv = [sys.executable, "-m", "uv"]
-    with tempfile.TemporaryDirectory(prefix="nyxmap-python-") as directory:
+    with tempfile.TemporaryDirectory(prefix="mp-osc-python-") as directory:
         managed = Path(directory)
         env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(managed)}
         subprocess.run([*uv, "python", "install", "3.11", "--no-bin"], env=env, check=True)
@@ -59,7 +59,7 @@ def bundle_python(folder):
             "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
         dependencies = ["mediapipe==0.10.32"]
         if sys.platform == "darwin":
-            # PyPI's macOS wheel contains FFmpeg codecs that cannot ship with NyxMap.
+            # PyPI's macOS wheel contains FFmpeg codecs that are excluded from the macOS package.
             # MediaPipe only uses OpenCV for drawing and encoding the setup preview.
             wheel_dir = managed / "wheelhouse"
             wheel_dir.mkdir()
@@ -75,7 +75,9 @@ def bundle_python(folder):
                     "-DWITH_AVIF=OFF", "-DWITH_JPEGXL=OFF", "-DWITH_GDAL=OFF",
                 )),
             }
-            subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-binary",
+            # Build against the bundled interpreter, regardless of the host Python version.
+            subprocess.run([*uv, "run", "--no-project", "--python", str(python), "--with", "pip",
+                            "--", "python", "-m", "pip", "wheel", "--no-deps", "--no-binary",
                             "opencv-contrib-python", "opencv-contrib-python==4.11.0.86",
                             "--wheel-dir", str(wheel_dir)], env=build_env, check=True)
             wheels = list(wheel_dir.glob("opencv_contrib_python-*.whl"))
