@@ -1,0 +1,42 @@
+name: Release downloads
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  release:
+    types: [published, edited, deleted]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-downloads
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Update README downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3; do
+            git fetch origin "$DEFAULT_BRANCH"
+            git reset --hard FETCH_HEAD
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              python3 .github/scripts/release_downloads.py
+            if git diff --quiet -- README.md; then exit 0; fi
+            git add README.md
+            git commit -m 'docs: update desktop download links'
+            if git push origin "HEAD:$DEFAULT_BRANCH"; then exit 0; fi
+          done
+          exit 1

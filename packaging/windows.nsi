@@ -1,5 +1,7 @@
 Unicode true
 Name "MP_OSC"
+Icon "..\assets\MP_OSC.ico"
+UninstallIcon "..\assets\MP_OSC.ico"
 OutFile "..\dist\MP_OSC-Windows-x64-Setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\MP_OSC"
 RequestExecutionLevel user

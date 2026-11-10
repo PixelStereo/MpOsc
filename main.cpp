@@ -264,6 +264,13 @@ QMap<QString, double> signalsFor(const QJsonObject &frame)
     return values;
 }
 
+double invertedSignal(const QString &address, double value)
+{
+    if (address.startsWith("/face/head/") || address.endsWith("/z")) return -value;
+    if (address == "/hands/count") return 2.0 - value;
+    return 1.0 - value;
+}
+
 class Window : public QWidget {
 public:
     Window()
@@ -301,6 +308,18 @@ public:
         bodyTracking->setChecked(previousTracking & 8);
         for (auto *w : QList<QWidget *>{cameraChoice, startCamera, open, stop, faceTracking, handTracking, bodyTracking})
             source->addWidget(w);
+        auto *about = new QPushButton("About");
+        about->setIcon(QApplication::windowIcon());
+        source->addWidget(about);
+        connect(about, &QPushButton::clicked, this, [this] {
+            QMessageBox dialog(this);
+            dialog.setWindowTitle("About MP_OSC");
+            dialog.setIconPixmap(QApplication::windowIcon().pixmap(96, 96));
+            dialog.setText(QStringLiteral("<h2>MP_OSC</h2><p>Motion Processing OSC</p>"));
+            dialog.setInformativeText("Turn movement into live OSC controls.\nBuilt by Pixel Stereo.");
+            dialog.setStandardButtons(QMessageBox::Ok);
+            dialog.exec();
+        });
         layout->addLayout(source);
 
         auto *videoBar = new QHBoxLayout;
@@ -371,10 +390,14 @@ public:
             view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
             view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
             view->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-            view->setHeaderLabels({"Signal / OSC address", "Value", "Attack", "Release"});
-            view->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-            view->setColumnWidth(1, 90);
-            for (int column : {2, 3}) view->setColumnWidth(column, 125);
+            view->setHeaderLabels({"Signal / OSC address", "Raw", "Invert", "Attack", "Release", "Value"});
+            view->header()->setStretchLastSection(false);
+            view->setColumnWidth(0, 195);
+            view->setColumnWidth(1, 75);
+            view->setColumnWidth(2, 56);
+            for (int column : {3, 4}) view->setColumnWidth(column, 104);
+            view->setColumnWidth(5, 85);
+            view->header()->setStretchLastSection(true);
             view->setSortingEnabled(true);
             view->sortItems(0, Qt::AscendingOrder);
             view->header()->setSortIndicatorShown(false);
@@ -391,7 +414,7 @@ public:
             connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
                     other->horizontalScrollBar(), &QScrollBar::setValue);
             connect(view->header(), &QHeaderView::sectionResized, other, [other](int column, int, int width) {
-                if (column != 0 && other->columnWidth(column) != width) other->setColumnWidth(column, width);
+                if (column != 5 && other->columnWidth(column) != width) other->setColumnWidth(column, width);
             });
         }
         split->addWidget(right);
@@ -664,6 +687,8 @@ private:
     struct Row {
         QTreeWidgetItem *item;
         QProgressBar *meter;
+        QLabel *raw;
+        QCheckBox *invert;
         QPushButton *signal;
         SliderField *attack, *release;
         double filtered = 0;
@@ -705,6 +730,7 @@ private:
         const auto previous = *row;
         const int value = previous.meter->value();
         const auto format = previous.meter->format();
+        const auto raw = previous.raw->text();
         const double attack = previous.attack->value();
         const double release = previous.release->value();
         delete previous.item;
@@ -714,6 +740,7 @@ private:
         row->sent = previous.sent;
         row->attack->setValue(attack);
         row->release->setValue(release);
+        row->raw->setText(raw);
         row->meter->setFormat(format);
         row->meter->setValue(value);
         resizePinnedTable();
@@ -771,6 +798,23 @@ private:
         nameLayout->addWidget(signal, 1);
         view->setItemWidget(item, 0, nameCell);
 
+        auto *raw = new QLabel(QStringLiteral("—"));
+        raw->setAlignment(Qt::AlignCenter);
+        view->setItemWidget(item, 1, raw);
+
+        auto *invert = new QCheckBox;
+        invert->setAccessibleName("Invert " + address);
+        invert->setToolTip("Invert before Attack and Release");
+        invert->setChecked(settings.value(settingsKey + "/invert", false).toBool());
+        auto *invertCell = new QWidget;
+        auto *invertLayout = new QHBoxLayout(invertCell);
+        invertLayout->setContentsMargins(0, 0, 0, 0);
+        invertLayout->addWidget(invert, 0, Qt::AlignCenter);
+        view->setItemWidget(item, 2, invertCell);
+        connect(invert, &QCheckBox::toggled, this, [settingsKey](bool enabled) {
+            QSettings().setValue(settingsKey + "/invert", enabled);
+        });
+
         auto *meter = new QProgressBar;
         if (address.startsWith("/face/head/")) {
             const int limit = address.endsWith("/pitch") ? 90 : 180;
@@ -785,7 +829,7 @@ private:
             "QProgressBar::chunk { background:#8394b3; border-radius:3px; }"
             "QProgressBar:disabled { color:#99999f; }"
             "QProgressBar::chunk:disabled { background:#45454d; }"));
-        view->setItemWidget(item, 1, meter);
+        view->setItemWidget(item, 5, meter);
         connect(signal, &QPushButton::toggled, this, [this, address, settingsKey, meter](bool enabled) {
             rows[address].sent = false;
             meter->setEnabled(send->isChecked() && enabled);
@@ -807,7 +851,7 @@ private:
             view->setItemWidget(item, column, field);
             return field;
         };
-        auto row = Row{item, meter, signal, addTimeField(2, "/attack"), addTimeField(3, "/release")};
+        auto row = Row{item, meter, raw, invert, signal, addTimeField(3, "/attack"), addTimeField(4, "/release")};
         if (pinned) resizePinnedTable();
         return row;
     }
@@ -827,18 +871,25 @@ private:
             const double raw = values.value(i.key());
             const bool angle = i->meter->minimum() < 0;
             const bool wraps = angle && i->meter->maximum() == 180;
-            const double difference = raw - i->filtered;
+            const auto formatValue = [angle, available](double value) {
+                if (!available) return QStringLiteral("—");
+                auto text = QString::number(value, 'f', angle ? 1 : 3);
+                if (angle) text += QStringLiteral("°");
+                return text;
+            };
+            i->raw->setText(formatValue(raw));
+            const double input = i->invert->isChecked() ? invertedSignal(i.key(), raw) : raw;
+            const double difference = input - i->filtered;
             const double delta = wraps ? std::remainder(difference, 360.0) : difference;
             const double tau = delta > 0 ? i->attack->value() : i->release->value();
-            i->filtered = !i->initialized || tau == 0 ? raw : i->filtered + delta * -std::expm1(-dt / tau);
+            i->filtered = !i->initialized || tau == 0 ? input : i->filtered + delta * -std::expm1(-dt / tau);
             if (wraps) i->filtered = std::remainder(i->filtered, 360.0);
             i->initialized = available;
             const double output = i->filtered;
             i->meter->setValue(qRound(angle
                 ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
                 : 1000 * std::clamp(output, 0.0, 1.0)));
-            const auto text = QString::number(output, 'f', angle ? 1 : 3);
-            i->meter->setFormat(available ? text + (angle ? QStringLiteral("°") : QString()) : QStringLiteral("—"));
+            i->meter->setFormat(formatValue(output));
             if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
             if (!available && !i->sent) continue;
             const double outgoing = available ? output : 0;
@@ -898,6 +949,7 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     app.setApplicationName("MP_OSC");
+    app.setWindowIcon(QIcon(":/assets/MP_OSC.png"));
     app.setOrganizationName("PixelStereo");
     auto palette = app.palette();
     palette.setColor(QPalette::Highlight, QColor("#8394b3"));
@@ -942,7 +994,11 @@ int main(int argc, char **argv)
             || !head.contains("/face/head/pitch") || std::abs(head.value("/face/head/pitch")) > 1e-6
             || !head.contains("/face/head/roll") || std::abs(head.value("/face/head/roll")) > 1e-6)
             return 11;
-        qInfo("Packaged inference, annotations, head rotation and two OSC destinations passed");
+        if (invertedSignal("/face/jawOpen", 0.25) != 0.75
+            || invertedSignal("/face/head/yaw", -30.0) != 30.0
+            || invertedSignal("/hands/count", 0.0) != 2.0)
+            return 12;
+        qInfo("Packaged inference, annotations, head rotation, inversion and two OSC destinations passed");
         return 0;
     }
     Window window;

@@ -138,3 +138,9 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
           fi
+
+  release-metadata:
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-metadata.yml

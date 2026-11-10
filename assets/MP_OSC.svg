@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>MP OSC</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#26384f"/><stop offset="1" stop-color="#111725"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#a5f4dd"/><stop offset="1" stop-color="#38b6c7"/>
+    </linearGradient>
+  </defs>
+  <rect x="56" y="72" width="912" height="912" rx="213" fill="#0b101a" opacity=".32"/>
+  <rect x="56" y="56" width="912" height="912" rx="213" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="207" fill="none" stroke="#7f9aba" stroke-opacity=".45" stroke-width="4"/>
+  <circle cx="512" cy="404" r="268" fill="#20354b"/>
+  <circle cx="512" cy="404" r="267" fill="none" stroke="#4a677d" stroke-width="2"/>
+  <path d="M2.182 0C1 0 .037.94.002 2.114L0 2.182v6.545a2.182 2.182 0 0 0 4.364 0V2.182A2.182 2.182 0 0 0 2.182 0Zm6.545 0c-1.182 0-2.145.94-2.18 2.114l-.002.068v13.09a2.182 2.182 0 0 0 4.364 0V2.183A2.182 2.182 0 0 0 8.727 0Zm6.546 0a2.182 2.182 0 0 0-2.182 2.182 2.182 2.182 0 0 0 2.182 2.182 2.182 2.182 0 0 0 2.182-2.182A2.182 2.182 0 0 0 15.273 0Zm6.545 0c-1.182 0-2.145.94-2.18 2.114l-.002.068v19.636a2.182 2.182 0 0 0 4.364 0V2.182A2.182 2.182 0 0 0 21.818 0Zm-6.545 6.545c-1.183 0-2.145.94-2.181 2.114l-.001.068v13.091a2.182 2.182 0 0 0 4.364 0V8.728a2.182 2.182 0 0 0-2.182-2.183zM2.182 13.091c-1.182 0-2.145.94-2.18 2.114L0 15.273v6.545a2.182 2.182 0 0 0 4.364 0v-6.545a2.182 2.182 0 0 0-2.182-2.182zm6.545 6.545a2.182 2.182 0 0 0-2.182 2.182A2.182 2.182 0 0 0 8.727 24a2.182 2.182 0 0 0 2.182-2.182 2.182 2.182 0 0 0-2.182-2.182Z" fill="url(#mark)" transform="translate(326 218) scale(15.5)"/>
+  <path d="M405 765v36a31 31 0 0 1-62 0v-36a31 31 0 0 1 62 0z
+           M541 744q-13-10-31-10c-21 0-34 10-34 24 0 15 10 21 33 26 22 5 33 11 33 26
+           0 15-13 23-35 23q-20 0-36-12
+           M678 744q-12-10-29-10a34 34 0 0 0-34 34v31a34 34 0 0 0 34 34q17 0 29-10"
+        fill="none" stroke="#f2f7ff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
