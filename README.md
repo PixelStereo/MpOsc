@@ -5,7 +5,7 @@
 **Turn movement into live OSC.** Use a camera or a video to play your visuals, sound and lighting with your face, hands and body. Tracking runs on your machine.
 
 <!-- release-downloads:start -->
-**[Download Mac](https://github.com/PixelStereo/MP_OSC/releases/download/v0.0.1/MP_OSC-macos-arm64.zip)** · **[Download Windows](https://github.com/PixelStereo/MP_OSC/releases/download/v0.0.1/MP_OSC-Windows-x64-Setup.exe)**
+**[Download Mac](https://github.com/PixelStereo/MP_OSC/releases/download/v0.1.0/MP_OSC-macos-arm64.zip)** · **[Download Windows](https://github.com/PixelStereo/MP_OSC/releases/download/v0.1.0/MP_OSC-Windows-x64-Setup.exe)**
 <!-- release-downloads:end -->
 
 On an **Apple Silicon Mac**, unzip and move MP_OSC to Applications. On **Windows x64**, run the installer and launch MP_OSC from the Start menu.
