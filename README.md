@@ -5,11 +5,13 @@ MP_OSC (MediaPipe OSC / Motion Processing OSC) turns camera or video movement in
 ## Perform
 
 1. Choose a device and click **Camera**, or open a video file.
-2. Choose **Face**, **Hands**, **Body**, or **Face + hands**. The Setup view shows the annotated source and live signal levels. Face exposes the blendshape scores. Hands tracks left and right simultaneously, including gestures. Body exposes XYZ landmarks.
-3. Tick **Send** for each signal you want. Enter one or more IP and port pairs separated by whitespace, for example `127.0.0.1:5000 10.0.0.2:9999`.
-4. Enable **Send OSC**. Each checked signal is sent to every destination. The address appears in the signal list.
+2. Enable **Face**, **Hands**, and **Body** independently. Enable all three to track them on the same frame. The Setup view shows the annotated source and live signal levels. Face exposes the blendshape scores. Hands tracks left and right simultaneously, including gestures. Body exposes XYZ landmarks.
+3. Click each signal name to enable it. An outline marks enabled signals. Enter one or more IP and port pairs separated by whitespace, for example `127.0.0.1:5000 10.0.0.2:9999`.
+4. Enable **Send OSC**. Each enabled signal is sent to every destination. The address appears in the signal list.
 
-**Smooth (ms)** is an optional time constant, **Deadband** suppresses changes smaller than the chosen amount, and **Threshold** converts a continuous value into a 0/1 gate. Each filter starts off. OSC values are floats. IPv6 addresses can use brackets, for example `[::1]:5000`.
+**Attack** sets the smoothing time for rising values and **Release** sets it for falling values. Both are in seconds. A value of zero follows the input immediately. OSC values are floats. IPv6 addresses can use brackets, for example `[::1]:5000`.
+
+Click the pin next to a signal to move it to the top. Click again to unpin it. **Save .mposc…** exports the interface and OSC settings, including per-signal settings and pins. **Open .mposc…** restores them. Start the camera or open a video to resume tracking.
 
 ## Build and release
 
