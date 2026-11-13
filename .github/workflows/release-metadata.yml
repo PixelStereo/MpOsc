@@ -33,10 +33,11 @@ jobs:
             git fetch origin "$DEFAULT_BRANCH"
             git reset --hard FETCH_HEAD
             gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-              python3 .github/scripts/release_downloads.py
-            if git diff --quiet -- README.md; then exit 0; fi
-            git add README.md
-            git commit -m 'docs: update desktop download links'
+              python3 .github/scripts/release_downloads.py > "$RUNNER_TEMP/tag"
+            tag=$(cat "$RUNNER_TEMP/tag")
+            if git diff --quiet -- README.md VERSION; then exit 0; fi
+            git add README.md VERSION
+            git commit -m "docs: update desktop download links for $tag"
             if git push origin "HEAD:$DEFAULT_BRANCH"; then exit 0; fi
           done
           exit 1
