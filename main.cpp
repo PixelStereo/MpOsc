@@ -4,9 +4,10 @@
 #include "MediaPipeClient.h"
 #include "MediaPipeRuntime.h"
 #include "SelfTest.h"
-#include "SignalWidgets.h"
+#include "SignalPanel.h"
 #include "Signals.h"
 #include "Theme.h"
+#include "VideoInput.h"
 #include "VideoPreview.h"
 #include "Worker.h"
 #include "MpOscVersion.h"
@@ -41,8 +42,6 @@
 #include <cmath>
 
 namespace {
-
-enum class VideoSource { None, Camera, File, Shared };
 
 struct DetectionOptions {
     int confidence = 50, tracking = 50, hands = 2;
@@ -130,10 +129,10 @@ public:
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
 #ifdef Q_OS_MACOS
         const auto sharedLabel = QStringLiteral("Syphon");
-        sharedFlip = settings.value("video/sharedFlip", true).toBool();
+        video.setSharedFlip(settings.value("video/sharedFlip", true).toBool());
 #else
         const auto sharedLabel = QStringLiteral("Spout");
-        sharedFlip = settings.value("video/sharedFlip", false).toBool();
+        video.setSharedFlip(settings.value("video/sharedFlip", false).toBool());
 #endif
         auto *sharedMode = new QPushButton(sharedLabel);
         auto *sharedPage = new QWidget;
@@ -155,15 +154,11 @@ public:
             menu.addSeparator();
             auto *flip = menu.addAction("Flip vertically");
             flip->setCheckable(true);
-            flip->setChecked(sharedFlip);
+            flip->setChecked(video.sharedFlip());
             const auto *choice = menu.exec(sharedButton->mapToGlobal(QPoint(0, sharedButton->height())));
             if (!choice) return;
             if (choice == flip) {
-                sharedFlip = flip->isChecked();
-                if (videoSource == VideoSource::Shared) {
-                    ++sourceGeneration;
-                    latest = {};
-                }
+                video.setSharedFlip(flip->isChecked());
                 return;
             }
             auto receiver = openSharedSender(choice->data().toString());
@@ -172,8 +167,7 @@ public:
                 return;
             }
             stopSource();
-            sharedInput = std::move(receiver);
-            videoSource = VideoSource::Shared;
+            video.openShared(std::move(receiver));
             stopButton->setEnabled(true);
             sharedName->setText(choice->text());
             status->setText(QStringLiteral("Waiting for %1 · %2").arg(sharedLabel, choice->text()));
@@ -294,108 +288,23 @@ public:
         picture->setMinimumWidth(250);
         picture->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
         split->addWidget(previewPanel);
-        auto *right = new QWidget;
-        auto *controls = new QVBoxLayout(right);
-        search = new QLineEdit;
-        search->setPlaceholderText("Filter signals by name");
-        auto *signalActions = new QHBoxLayout;
-        auto *enableAll = new QPushButton("Enable all");
-        auto *disableAll = new QPushButton("Disable all");
-        signalActions->addWidget(search, 1);
-        signalActions->addWidget(enableAll);
-        signalActions->addWidget(disableAll);
-        controls->addLayout(signalActions);
-        connect(enableAll, &QPushButton::clicked, this, [this] {
-            for (auto &row : rows) row.signal->setChecked(true);
-        });
-        connect(disableAll, &QPushButton::clicked, this, [this] {
-            for (auto &row : rows) row.signal->setChecked(false);
-        });
-        const auto makeTable = [] {
-            auto *view = new QTreeWidget;
-            view->setRootIsDecorated(false);
-            view->setSelectionMode(QAbstractItemView::NoSelection);
-            view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-            view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-            view->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-            view->setHeaderLabels({"Signal / OSC address", "Raw", "Invert", "Attack", "Release", "Value"});
-            view->header()->setStretchLastSection(false);
-            view->setColumnWidth(0, 195);
-            view->setColumnWidth(1, 75);
-            view->setColumnWidth(2, 56);
-            for (int column : {3, 4}) view->setColumnWidth(column, 104);
-            view->setColumnWidth(5, 85);
-            view->header()->setStretchLastSection(true);
-            view->setSortingEnabled(true);
-            view->sortItems(0, Qt::AscendingOrder);
-            view->header()->setSortIndicatorShown(false);
-            view->header()->setSectionsClickable(false);
-            return view;
-        };
-        pinnedTable = makeTable();
-        table = makeTable();
-        pinnedTable->hide();
-        controls->addWidget(pinnedTable);
-        controls->addWidget(table, 1);
-        for (auto *view : {table, pinnedTable}) {
-            auto *other = view == table ? pinnedTable : table;
-            connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
-                    other->horizontalScrollBar(), &QScrollBar::setValue);
-            connect(view->header(), &QHeaderView::sectionResized, other, [other](int column, int, int width) {
-                if (column != 5 && other->columnWidth(column) != width) other->setColumnWidth(column, width);
-            });
-        }
-        split->addWidget(right);
+        signalPanel = new SignalPanel;
+        split->addWidget(signalPanel);
         if (!split->restoreState(settings.value("window/split").toByteArray()))
             split->setSizes({520, 600});
         layout->addWidget(split, 1);
         status = new QLabel("Ready");
         layout->addWidget(status);
-        capture.setVideoSink(&cameraSink);
-        player.setVideoSink(&fileSink);
-        player.setLoops(QMediaPlayer::Infinite);
-
-        connect(&cameraSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
-            if (videoSource == VideoSource::Camera && frame.isValid()) receiveFrame(frame.toImage());
-        });
-        connect(&fileSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
-            if (videoSource == VideoSource::File && frame.isValid()) receiveFrame(frame.toImage());
+        connect(&video, &VideoInput::frameReady, this, [this](const QImage &frame) { receiveFrame(frame); });
+        connect(&video, &VideoInput::errorOccurred, this, [this](const QString &error) { status->setText(error); });
+        connect(&video, &VideoInput::sourceReset, this, [this] {
+            ++sourceGeneration;
+            latest = {};
         });
         auto openCamera = [this] {
-            const auto devices = QMediaDevices::videoInputs();
-            const auto id = cameraChoice->currentData().toByteArray();
-            for (const auto &device : devices)
-                if (device.id() == id) {
-                    stopSource();
-                    capture.setCamera(nullptr);
-                    camera.reset(new QCamera(device));
-                    // The largest landscape format within the chosen limit; when every format is larger, the smallest one.
-                    const qint64 limit = cameraQuality->currentData().toLongLong();
-                    QCameraFormat preferred;
-                    bool preferredWithinLimit = false;
-                    for (const auto &format : device.videoFormats()) {
-                        const auto size = format.resolution();
-                        if (size.width() <= size.height()) continue;
-                        const qint64 pixels = qint64(size.width()) * size.height();
-                        const bool within = limit == 0 || pixels <= limit;
-                        const auto current = preferred.resolution();
-                        const qint64 best = qint64(current.width()) * current.height();
-                        if (preferred.isNull() || (within && (!preferredWithinLimit || pixels > best))
-                            || (!within && !preferredWithinLimit && pixels < best)) {
-                            preferred = format;
-                            preferredWithinLimit = within;
-                        }
-                    }
-                    if (!preferred.isNull()) camera->setCameraFormat(preferred);
-                    connect(camera.get(), &QCamera::errorOccurred, this, [this](QCamera::Error, const QString &error) {
-                        status->setText(error);
-                    });
-                    capture.setCamera(camera.get());
-                    videoSource = VideoSource::Camera;
-                    stopButton->setEnabled(true);
-                    camera->start();
-                    return;
-                }
+            stopSource();
+            if (video.startCamera(cameraChoice->currentData().toByteArray(), cameraQuality->currentData().toLongLong()))
+                stopButton->setEnabled(true);
         };
         connect(startCamera, &QPushButton::clicked, this, [this, openCamera] {
             const QCameraPermission permission;
@@ -418,32 +327,20 @@ public:
             settings.setValue("video/lastDirectory", QFileInfo(path).absolutePath());
             fileName->setText(QFileInfo(path).fileName());
             stopSource();
-            videoSource = VideoSource::File;
+            video.openFile(path);
             stopButton->setEnabled(true);
-            player.setSource(QUrl::fromLocalFile(path));
-            player.play();
         });
         connect(cameraQuality, &QComboBox::currentIndexChanged, this, [this, startCamera] {
             QSettings().setValue("video/cameraQuality", cameraQuality->currentData());
-            if (videoSource == VideoSource::Camera) startCamera->click();
+            if (video.source() == VideoInput::Source::Camera) startCamera->click();
         });
         connect(stop, &QPushButton::clicked, this, [this] { stopSource(); });
-        connect(&player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &error) { status->setText(error); });
-        connect(search, &QLineEdit::textChanged, this, [this](const QString &text) {
-            query = text;
-            for (auto i = rows.begin(); i != rows.end(); ++i)
-                if (i->item->treeWidget() == table) i->item->setHidden(!i.key().contains(query, Qt::CaseInsensitive));
-        });
         connect(destinations, &QLineEdit::editingFinished, this, [this] {
             QSettings().setValue("destinations", destinations->text());
-            for (auto &row : rows) row.sent = false;
+            signalPanel->resetSent();
         });
-        connect(send, &QPushButton::toggled, this, [this] {
-            for (auto &row : rows) {
-                row.sent = false;
-                row.meter->setEnabled(send->isChecked() && row.signal->isChecked());
-            }
-        });
+        connect(send, &QPushButton::toggled, this, [this](bool on) { signalPanel->setSending(on); });
+        signalPanel->setSending(send->isChecked());
         connect(&mediapipe, &MediaPipeClient::statusChanged, this, [this](const QString &text, const QString &details) {
             status->setText(text);
             if (!details.isEmpty()) status->setToolTip(details);
@@ -459,24 +356,13 @@ public:
             picture->showFrame(submittedSource, current ? result : QJsonObject(), region);
             if (current) {
                 updateTelemetry(result);
-                updateSignals(result);
+                status->setText(signalPanel->update(result, destinations->text(), send->isChecked()));
             }
         });
         mediapipe.start();
-        clock.start();
         connect(&timer, &QTimer::timeout, this, [this] {
             if (mediapipe.isBusy()) return;
-            if (sharedInput) {
-                auto frame = sharedInput->frame();
-                if (sharedFlip && !frame.isNull()) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
-                    frame.flip(Qt::Vertical);
-#else
-                    frame = frame.mirrored(false, true);
-#endif
-                }
-                receiveFrame(std::move(frame));
-            }
+            video.poll();
             if (latest.isNull()) return;
             if (picture->isDrawing()) {
                 picture->showFrame(latest);
@@ -513,20 +399,20 @@ public:
             active = true;
             mediapipe.send(packet);
         });
-        search->setText(settings.value("window/search").toString());
-        restoreSignalRows(settings);
+        signalPanel->setFilter(settings.value("window/search").toString());
+        signalPanel->restoreRows(settings);
         timer.start(33);
     }
 
     void storeSettings(QSettings &settings)
     {
-        settings.setValue("window/search", search->text());
+        settings.setValue("window/search", signalPanel->filter());
         settings.setValue("window/geometry", saveGeometry());
         settings.setValue("window/split", split->saveState());
         if (cameraChoice->currentIndex() >= 0)
             settings.setValue("video/cameraId", cameraChoice->currentData());
         settings.setValue("video/trackingMask", trackingMask());
-        settings.setValue("video/sharedFlip", sharedFlip);
+        settings.setValue("video/sharedFlip", video.sharedFlip());
         if (const auto *mode = inputModes->checkedButton()) settings.setValue("video/inputMode", mode->property("sourceKey"));
         settings.setValue("video/minDetection", detectionOptions.confidence);
         settings.setValue("video/minTracking", detectionOptions.tracking);
@@ -654,17 +540,6 @@ private:
         telemetry->setText(labels.join(QStringLiteral("  ·  ")));
     }
 
-    void restoreSignalRows(const QSettings &settings)
-    {
-        for (const auto &key : settings.allKeys()) {
-            if (!key.startsWith("signals/")) continue;
-            const auto end = key.lastIndexOf('/');
-            if (end <= 7) continue;
-            const auto address = key.mid(7, end - 7);
-            if (!rows.contains(address)) rows.insert(address, makeRow(address));
-        }
-    }
-
     void saveConfiguration(bool saveAs)
     {
         auto path = configurationPath;
@@ -714,18 +589,15 @@ private:
             if (configurationKey(key)) local.setValue(key, snapshot.value(key));
         }
         local.sync();
-        rows.clear();
-        table->clear();
-        pinnedTable->clear();
-        resizePinnedTable();
+        signalPanel->clear();
         restoreGeometry(local.value("window/geometry").toByteArray());
         split->restoreState(local.value("window/split").toByteArray());
         const int camera = cameraChoice->findData(local.value("video/cameraId").toByteArray());
         cameraChoice->setCurrentIndex(camera >= 0 ? camera : (cameraChoice->count() > 0 ? 0 : -1));
 #ifdef Q_OS_MACOS
-        sharedFlip = local.value("video/sharedFlip", true).toBool();
+        video.setSharedFlip(local.value("video/sharedFlip", true).toBool());
 #else
-        sharedFlip = local.value("video/sharedFlip", false).toBool();
+        video.setSharedFlip(local.value("video/sharedFlip", false).toBool());
 #endif
         selectInputMode(local.value("video/inputMode", "camera").toString());
         const int mask = local.value("video/trackingMask", 4).toInt();
@@ -737,11 +609,11 @@ private:
         picture->roi = selection.isEmpty() ? fullFrame : selection;
         destinations->setText(local.value("destinations", "127.0.0.1:5000").toString());
         send->setChecked(local.value("osc/send", false).toBool());
-        search->setText(local.value("window/search").toString());
+        signalPanel->setFilter(local.value("window/search").toString());
         previewMirror->setChecked(local.value("window/mirror", false).toBool());
         previewLandmarks->setChecked(local.value("window/landmarks", true).toBool());
         loadDetectionOptions(local);
-        restoreSignalRows(local);
+        signalPanel->restoreRows(local);
         rememberConfiguration(path);
         status->setText("Configuration loaded");
     }
@@ -785,11 +657,8 @@ private:
 
     void stopSource()
     {
-        videoSource = VideoSource::None;
+        video.stop();
         stopButton->setEnabled(false);
-        sharedInput.reset();
-        if (camera) camera->stop();
-        player.stop();
         latest = {};
         active = false;
         sourceSize = analysedSize = {};
@@ -800,193 +669,12 @@ private:
         inferenceFrames = 0;
         ++sourceGeneration;
         picture->showFrame({});
-        for (auto &row : rows) row.initialized = row.sent = false;
+        signalPanel->resetValues();
     }
 
     void showFrame(const QImage &image)
     {
         picture->showFrame(image);
-    }
-
-    void resizePinnedTable()
-    {
-        const int count = pinnedTable->topLevelItemCount();
-        pinnedTable->setVisible(count > 0);
-        table->setHeaderHidden(count > 0);
-        if (count > 0) {
-            const int rowHeight = std::max(26, pinnedTable->visualItemRect(pinnedTable->topLevelItem(0)).height());
-            pinnedTable->setFixedHeight(pinnedTable->header()->sizeHint().height() +
-                                       std::min(count, 6) * rowHeight + 2 * pinnedTable->frameWidth() +
-                                       pinnedTable->horizontalScrollBar()->sizeHint().height());
-        }
-    }
-
-    void moveSignal(const QString &address, bool pinned)
-    {
-        auto row = rows.find(address);
-        if (row == rows.end() || (row->item->treeWidget() == pinnedTable) == pinned) return;
-        const auto previous = *row;
-        const int value = previous.meter->value();
-        const auto format = previous.meter->format();
-        const auto raw = previous.raw->text();
-        const double attack = previous.attack->value();
-        const double release = previous.release->value();
-        delete previous.item;
-        *row = makeRow(address);
-        row->filtered = previous.filtered;
-        row->initialized = previous.initialized;
-        row->sent = previous.sent;
-        row->attack->setValue(attack);
-        row->release->setValue(release);
-        row->raw->setText(raw);
-        row->meter->setFormat(format);
-        row->meter->setValue(value);
-        resizePinnedTable();
-    }
-
-    Row makeRow(const QString &address)
-    {
-        const auto settingsKey = QStringLiteral("signals") + address;
-        QSettings settings;
-        const bool pinned = settings.value(settingsKey + "/pinned", false).toBool();
-        auto *view = pinned ? pinnedTable : table;
-        auto *item = new SignalItem(view, address);
-        item->setHidden(!pinned && !address.contains(query, Qt::CaseInsensitive));
-        auto *signal = new QPushButton(address);
-        signal->setCheckable(true);
-        signal->setChecked(settings.value(settingsKey + "/send", false).toBool());
-        signal->setObjectName("signalName");
-        auto *nameCell = new QFrame;
-        nameCell->setObjectName("signalCell");
-        const auto updateOutline = [nameCell](bool enabled) {
-            nameCell->setProperty("oscEnabled", enabled);
-            nameCell->style()->unpolish(nameCell);
-            nameCell->style()->polish(nameCell);
-            nameCell->update();
-        };
-        updateOutline(signal->isChecked());
-        connect(signal, &QPushButton::toggled, nameCell, updateOutline);
-        auto *nameLayout = new QHBoxLayout(nameCell);
-        nameLayout->setContentsMargins(1, 1, 1, 1);
-        nameLayout->setSpacing(4);
-        auto *pin = new PinButton;
-        pin->setChecked(pinned);
-        pin->setToolTip(pinned ? "Unpin signal" : "Pin signal");
-        pin->setAccessibleName(pin->toolTip());
-        connect(pin, &QToolButton::toggled, this, [this, address, settingsKey](bool enabled) {
-            QSettings().setValue(settingsKey + "/pinned", enabled);
-            moveSignal(address, enabled);
-        }, Qt::QueuedConnection);
-        signal->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        signal->setToolTip(address);
-        nameLayout->addWidget(pin, 0, Qt::AlignVCenter);
-        nameLayout->addWidget(signal, 1);
-        view->setItemWidget(item, 0, nameCell);
-
-        auto *raw = new QLabel(QStringLiteral("—"));
-        raw->setAlignment(Qt::AlignCenter);
-        view->setItemWidget(item, 1, raw);
-
-        auto *invert = new QCheckBox;
-        invert->setAccessibleName("Invert " + address);
-        invert->setToolTip("Invert before Attack and Release");
-        invert->setChecked(settings.value(settingsKey + "/invert", false).toBool());
-        auto *invertCell = new QWidget;
-        auto *invertLayout = new QHBoxLayout(invertCell);
-        invertLayout->setContentsMargins(0, 0, 0, 0);
-        invertLayout->addWidget(invert, 0, Qt::AlignCenter);
-        view->setItemWidget(item, 2, invertCell);
-        connect(invert, &QCheckBox::toggled, this, [settingsKey](bool enabled) {
-            QSettings().setValue(settingsKey + "/invert", enabled);
-        });
-
-        auto *meter = new QProgressBar;
-        if (address.startsWith("/face/head/")) {
-            const int limit = address.endsWith("/pitch") ? 90 : 180;
-            meter->setRange(-limit, limit);
-        } else {
-            meter->setRange(0, 1000);
-        }
-        meter->setEnabled(send->isChecked() && signal->isChecked());
-        meter->setObjectName("signalValue");
-        view->setItemWidget(item, 5, meter);
-        connect(signal, &QPushButton::toggled, this, [this, address, settingsKey, meter](bool enabled) {
-            rows[address].sent = false;
-            meter->setEnabled(send->isChecked() && enabled);
-            QSettings().setValue(settingsKey + "/send", enabled);
-        });
-
-        const auto addTimeField = [&](int column, const QString &name) {
-            const auto key = settingsKey + name;
-            auto *field = new SliderField;
-            field->setDecimals(3);
-            field->setRange(0, 2);
-            field->setTypedRange(0, 60);
-            field->setSingleStep(.01);
-            field->setSuffix(" s");
-            field->setValue(settings.value(key, settings.value(settingsKey + "/smooth", 0).toDouble() / 1000).toDouble());
-            connect(field, &SliderField::editingFinished, this, [key](double value) {
-                QSettings().setValue(key, value);
-            });
-            view->setItemWidget(item, column, field);
-            return field;
-        };
-        auto row = Row{item, meter, raw, invert, signal, addTimeField(3, "/attack"), addTimeField(4, "/release")};
-        if (pinned) resizePinnedTable();
-        return row;
-    }
-
-    void updateSignals(const QJsonObject &frame)
-    {
-        const auto values = signalsFor(frame);
-        QList<Destination> targets;
-        const bool valid = parseDestinations(destinations->text(), targets);
-        const bool armed = send->isChecked() && valid;
-        const double dt = std::clamp(clock.restart() / 1000.0, .001, .5);
-        for (auto i = values.begin(); i != values.end(); ++i)
-            if (!rows.contains(i.key())) rows.insert(i.key(), makeRow(i.key()));
-        int messages = 0, errors = 0;
-        for (auto i = rows.begin(); i != rows.end(); ++i) {
-            const bool available = values.contains(i.key());
-            const double raw = values.value(i.key());
-            const bool angle = i->meter->minimum() < 0;
-            const bool wraps = angle && i->meter->maximum() == 180;
-            const auto formatValue = [angle, available](double value) {
-                if (!available) return QStringLiteral("—");
-                auto text = QString::number(value, 'f', angle ? 1 : 3);
-                if (angle) text += QStringLiteral("°");
-                return text;
-            };
-            i->raw->setText(formatValue(raw));
-            const double input = i->invert->isChecked() ? invertedSignal(i.key(), raw) : raw;
-            const double difference = input - i->filtered;
-            const double delta = wraps ? std::remainder(difference, 360.0) : difference;
-            const double tau = delta > 0 ? i->attack->value() : i->release->value();
-            i->filtered = !i->initialized || tau == 0 ? input : i->filtered + delta * -std::expm1(-dt / tau);
-            if (wraps) i->filtered = std::remainder(i->filtered, 360.0);
-            i->initialized = available;
-            const double output = i->filtered;
-            i->meter->setValue(qRound(angle
-                ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
-                : 1000 * std::clamp(output, 0.0, 1.0)));
-            i->meter->setFormat(formatValue(output));
-            if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
-            if (!available && !i->sent) continue;
-            const double outgoing = available ? output : 0;
-            const auto packet = osc::encode({i.key(), "f", {outgoing}});
-            bool delivered = true;
-            for (const auto &target : targets) {
-                if (udp.writeDatagram(packet, target.ip, target.port) < 0) { ++errors; delivered = false; }
-                else ++messages;
-            }
-            if (delivered) i->sent = available;
-        }
-        QString label = send->isChecked() && !valid ? "Invalid OSC destination" :
-                        QString("%1 live signals · %2 OSC datagrams").arg(values.size()).arg(messages);
-        for (const auto &key : frame.keys())
-            if (key == "error" || key.endsWith("_error")) label += " · " + frame.value(key).toString();
-        if (errors) label += QString(" · %1 send errors").arg(errors);
-        status->setText(label);
     }
 
     int trackingMask() const
@@ -1002,7 +690,8 @@ private:
     QSize sourceSize, analysedSize;
     QComboBox *analysisSize, *cameraQuality;
     int analysisEdge = 640;
-    QLineEdit *destinations, *search;
+    QLineEdit *destinations;
+    SignalPanel *signalPanel;
     QPushButton *send, *previewMirror, *previewLandmarks, *stopButton;
     QButtonGroup *inputModes;
     QStackedWidget *inputPages;
@@ -1012,19 +701,10 @@ private:
     QSplitter *split;
     VideoPreview *picture;
     QLabel *status;
-    QTreeWidget *table, *pinnedTable;
-    QMap<QString, Row> rows;
-    QString query;
-    QMediaCaptureSession capture;
-    QMediaPlayer player;
-    QVideoSink cameraSink, fileSink;
-    std::unique_ptr<QCamera> camera;
-    std::unique_ptr<SharedInput> sharedInput;
-    VideoSource videoSource = VideoSource::None;
+    VideoInput video;
     MediaPipeClient mediapipe;
-    QUdpSocket udp;
     QTimer timer;
-    QElapsedTimer clock, inferenceClock;
+    QElapsedTimer inferenceClock;
     double inferenceRate = 0;
     int inferenceFrames = 0;
     QImage latest, submitted, submittedSource;
@@ -1033,7 +713,7 @@ private:
     QRectF submittedSelection;
     int sourceGeneration = 0, submittedGeneration = 0;
     int submittedMask = 0;
-    bool active = false, sharedFlip = false;
+    bool active = false;
 };
 } // namespace
 

@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp OscCodec.cpp SliderField.cpp SliderField.h
     Theme.cpp Destinations.cpp MediaPipeClient.cpp MediaPipeClient.h MediaPipeRuntime.cpp Signals.cpp SelfTest.cpp
-    SignalWidgets.h VideoPreview.h)
+    SignalWidgets.h VideoPreview.h SignalPanel.cpp SignalPanel.h VideoInput.cpp VideoInput.h)
 qt_add_resources(MpOsc "branding" PREFIX "/" FILES assets/MpOsc.png)
 if(APPLE)
     target_sources(MpOsc PRIVATE assets/MpOsc.icns)
