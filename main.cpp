@@ -1,5 +1,13 @@
 #include "OscCodec.h"
 #include "SliderField.h"
+#include "Destinations.h"
+#include "MediaPipeClient.h"
+#include "MediaPipeRuntime.h"
+#include "SelfTest.h"
+#include "SignalWidgets.h"
+#include "Signals.h"
+#include "Theme.h"
+#include "VideoPreview.h"
 #include "Worker.h"
 #include "MpOscVersion.h"
 #include "SharedInput.h"
@@ -33,356 +41,6 @@
 #include <cmath>
 
 namespace {
-void applyInterfacePalette(QApplication &app, Qt::ColorScheme scheme)
-{
-    const bool dark = scheme == Qt::ColorScheme::Dark;
-    const QColor text(dark ? "#f0f4fa" : "#182234");
-    const QColor muted(dark ? "#b7c4d6" : "#49586c");
-    const QColor accent(dark ? "#435a7d" : "#a9bfdf");
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor(dark ? "#252c37" : "#f2f5f9"));
-    palette.setColor(QPalette::Base, QColor(dark ? "#1d2430" : "#ffffff"));
-    palette.setColor(QPalette::AlternateBase, QColor(dark ? "#303a49" : "#e9edf4"));
-    palette.setColor(QPalette::Button, QColor(dark ? "#303947" : "#ffffff"));
-    palette.setColor(QPalette::Mid, QColor(dark ? "#7789a3" : "#64758b"));
-    palette.setColor(QPalette::Light, QColor(dark ? "#4b586c" : "#ffffff"));
-    palette.setColor(QPalette::Midlight, QColor(dark ? "#3a4759" : "#e7ecf4"));
-    palette.setColor(QPalette::Dark, QColor(dark ? "#121822" : "#a6b3c6"));
-    palette.setColor(QPalette::Shadow, QColor(dark ? "#0b1018" : "#73849b"));
-    palette.setColor(QPalette::Highlight, accent);
-    palette.setColor(QPalette::Link, QColor(dark ? "#adc8ef" : "#315a89"));
-    palette.setColor(QPalette::LinkVisited, QColor(dark ? "#cdb8ef" : "#624587"));
-    palette.setColor(QPalette::ToolTipBase, palette.color(QPalette::Base));
-    palette.setColor(QPalette::ToolTipText, text);
-    palette.setColor(QPalette::PlaceholderText, muted);
-    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText, QPalette::HighlightedText}) {
-        palette.setColor(role, text);
-        palette.setColor(QPalette::Disabled, role, muted);
-    }
-    palette.setColor(QPalette::Disabled, QPalette::Highlight, palette.color(QPalette::AlternateBase));
-    app.setPalette(palette);
-
-    QString style = QStringLiteral(R"(
-QGroupBox#section { border:1px solid @border; border-radius:8px; margin-top:9px; }
-QGroupBox#section::title { color:@text; subcontrol-origin:margin; left:11px; padding:0 5px; font-weight:600; }
-QPushButton#toggle { background:@button; color:@text; border:1px solid @border; border-radius:6px; padding:5px 9px; }
-QPushButton#toggle:hover, QPushButton#toggle:focus { border-color:@focus; }
-QPushButton#toggle:checked { background:@fill; color:@text; border-color:@focus; font-weight:600; }
-QPushButton#toggle:disabled { color:@muted; }
-QPushButton#signalName { background:transparent; color:@text; text-align:left;
-    border:1px solid transparent; border-radius:5px; padding:3px 6px; }
-QPushButton#signalName:hover, QPushButton#signalName:focus { background:@alternate; }
-QFrame#signalCell { border:1px solid transparent; border-radius:5px; }
-QFrame#signalCell[oscEnabled="true"] { border-color:@focus; }
-QToolButton#signalPin { border:1px solid transparent; border-radius:4px; }
-QToolButton#signalPin:hover, QToolButton#signalPin:checked { background:@alternate; }
-QToolButton#signalPin:focus { border-color:@focus; }
-QProgressBar#signalValue { background:@base; color:@text; border:1px solid @border; border-radius:4px; text-align:center; }
-QProgressBar#signalValue::chunk { background:@fill; border-radius:3px; }
-QProgressBar#signalValue:disabled { color:@muted; }
-QProgressBar#signalValue::chunk:disabled { background:@alternate; }
-)");
-    style.replace("@text", text.name()).replace("@muted", muted.name()).replace("@fill", accent.name())
-         .replace("@button", palette.color(QPalette::Button).name()).replace("@base", palette.color(QPalette::Base).name())
-         .replace("@alternate", palette.color(QPalette::AlternateBase).name()).replace("@border", palette.color(QPalette::Mid).name())
-         .replace("@focus", palette.color(QPalette::Link).name());
-    app.setStyleSheet(style);
-}
-
-QIcon signalPinIcon(bool pinned, const QColor &color)
-{
-    QPixmap icon(32, 32);
-    icon.setDevicePixelRatio(2);
-    icon.fill(Qt::transparent);
-    QPainter painter(&icon);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.translate(8, 8);
-    painter.rotate(pinned ? 0 : 38);
-    painter.setPen(QPen(color, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    painter.setBrush(pinned ? QBrush(color) : QBrush(Qt::NoBrush));
-    QPainterPath head;
-    head.moveTo(-3, -5);
-    head.lineTo(3, -5);
-    head.lineTo(2, -1);
-    head.lineTo(4, 1);
-    head.lineTo(-4, 1);
-    head.lineTo(-2, -1);
-    head.closeSubpath();
-    painter.drawPath(head);
-    painter.drawLine(QPointF(0, 1), QPointF(0, 6));
-    painter.end();
-    return QIcon(icon);
-}
-
-class PinButton final : public QToolButton {
-public:
-    PinButton()
-    {
-        setCheckable(true);
-        setFixedSize(24, 24);
-        setIconSize(QSize(16, 16));
-        setCursor(Qt::PointingHandCursor);
-        setObjectName("signalPin");
-        connect(this, &QToolButton::toggled, this, [this] { refreshIcon(); });
-        refreshIcon();
-    }
-
-protected:
-    void changeEvent(QEvent *event) override
-    {
-        QToolButton::changeEvent(event);
-        if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) refreshIcon();
-    }
-
-private:
-    void refreshIcon() { setIcon(signalPinIcon(isChecked(), QApplication::palette().color(QPalette::Link))); }
-};
-
-class SignalItem final : public QTreeWidgetItem
-{
-public:
-    SignalItem(QTreeWidget *tree, const QString &address) : QTreeWidgetItem(tree)
-    {
-        setData(0, Qt::UserRole, address);
-        setData(0, Qt::AccessibleTextRole, address);
-        setSizeHint(0, QSize(0, 26));
-    }
-
-    bool operator<(const QTreeWidgetItem &other) const override
-    {
-        return data(0, Qt::UserRole).toString() < other.data(0, Qt::UserRole).toString();
-    }
-};
-
-class VideoPreview final : public QWidget
-{
-public:
-    using QWidget::QWidget;
-    QRectF roi{0, 0, 1, 1};
-    bool editRoi = false, mirror = false, showLandmarks = true;
-    bool isDrawing() const { return dragging; }
-    void showFrame(const QImage &frame, const QJsonObject &tracking = {}, const QRectF &trackedArea = {})
-    {
-        image = frame;
-        result = tracking;
-        inferenceRegion = trackedArea;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter painter(this);
-        painter.fillRect(rect(), QColor("#12151b"));
-        if (image.isNull()) {
-            painter.setPen(QColor("#e1e1e4"));
-            painter.drawText(rect(), Qt::AlignCenter, "Choose a video input to begin");
-            return;
-        }
-        const auto area = imageRect();
-        painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.save();
-        if (mirror) {
-            painter.translate(2 * area.center().x(), 0);
-            painter.scale(-1, 1);
-        }
-        painter.drawImage(area, image);
-        painter.restore();
-
-        if (showLandmarks && !inferenceRegion.isEmpty())
-            drawTrackingOverlay(painter, toPreview(inferenceRegion, area), result, mirror);
-        if (editRoi || roi != QRectF(0, 0, 1, 1)) {
-            const auto selection = toPreview(roi, area);
-            QPainterPath shade;
-            shade.addRect(area);
-            shade.addRect(selection);
-            painter.fillPath(shade, QColor(0, 0, 0, 214));
-            painter.setPen(QPen(QColor("#a5c5e9"), 1.2, editRoi ? Qt::DashLine : Qt::SolidLine));
-            painter.drawRect(selection.adjusted(1, 1, -1, -1));
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor("#a5c5e9"));
-            for (const auto &corner : {selection.topLeft(), selection.topRight(), selection.bottomLeft(), selection.bottomRight()})
-                painter.drawEllipse(corner, 2.5, 2.5);
-        }
-
-    }
-
-    void mousePressEvent(QMouseEvent *event) override
-    {
-        if (!editRoi || event->button() != Qt::LeftButton || !imageRect().contains(event->position())) return;
-        anchor = imagePoint(event->position());
-        dragging = true;
-    }
-    void mouseMoveEvent(QMouseEvent *event) override
-    {
-        if (dragging) select(event->position());
-    }
-    void mouseReleaseEvent(QMouseEvent *event) override
-    {
-        if (!dragging || event->button() != Qt::LeftButton) return;
-        select(event->position());
-        dragging = false;
-    }
-
-private:
-    QRectF toPreview(const QRectF &region, const QRectF &area) const
-    {
-        const auto x = mirror ? 1 - region.right() : region.x();
-        return QRectF(area.x() + x * area.width(), area.y() + region.y() * area.height(),
-                      region.width() * area.width(), region.height() * area.height());
-    }
-
-    QRectF imageRect() const
-    {
-        if (image.isNull()) return {};
-        const QSize size = image.size().scaled(this->size(), Qt::KeepAspectRatio);
-        return QRectF(QPointF((width() - size.width()) / 2., (height() - size.height()) / 2.), size);
-    }
-    QPointF imagePoint(const QPointF &point) const
-    {
-        const auto area = imageRect();
-        const auto x = std::clamp((point.x() - area.x()) / std::max(1., area.width()), 0., 1.);
-        return {mirror ? 1 - x : x,
-                std::clamp((point.y() - area.y()) / std::max(1., area.height()), 0., 1.)};
-    }
-    void select(const QPointF &point)
-    {
-        const auto selection = QRectF(anchor, imagePoint(point)).normalized();
-        if (selection.width() * image.width() >= 2 && selection.height() * image.height() >= 2) {
-            roi = selection;
-            update();
-        }
-    }
-    QImage image;
-    QJsonObject result;
-    QRectF inferenceRegion;
-    QPointF anchor;
-    bool dragging = false;
-};
-
-struct Destination { QHostAddress ip; quint16 port; };
-
-bool parseDestinations(const QString &text, QList<Destination> &result)
-{
-    const auto entries = text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-    for (const QString &entry : entries) {
-        const int colon = entry.lastIndexOf(':');
-        auto host = entry.left(colon);
-        if (host.startsWith('[') && host.endsWith(']')) host = host.mid(1, host.size() - 2);
-        bool ok = false;
-        const int port = entry.mid(colon + 1).toInt(&ok);
-        const QHostAddress ip(host);
-        if (colon < 1 || !ok || port < 1 || port > 65535 || ip.isNull()) return false;
-        const auto same = [&](const Destination &d) { return d.ip == ip && d.port == port; };
-        if (std::none_of(result.begin(), result.end(), same)) result.append({ip, quint16(port)});
-    }
-    return !result.isEmpty();
-}
-
-QString runtimeFolder()
-{
-    const QDir app(QCoreApplication::applicationDirPath());
-#ifdef Q_OS_MACOS
-    return app.absoluteFilePath("../Resources/mediapipe");
-#else
-    return app.absoluteFilePath("mediapipe");
-#endif
-}
-
-QString pythonExecutable(const QString &root)
-{
-#ifdef Q_OS_WIN
-    return QDir(root).filePath("python/python.exe");
-#else
-    return QDir(root).filePath("python/bin/python3.11");
-#endif
-}
-
-void addHeadRotation(const QJsonArray &matrix, QMap<QString, double> &values)
-{
-    if (matrix.size() != 16) return;
-    double r[3][3];
-    // The worker sends a row-major transform. Normalize its basis vectors to remove scale.
-    for (int column = 0; column < 3; ++column) {
-        for (int row = 0; row < 3; ++row) {
-            const auto value = matrix.at(row * 4 + column);
-            if (!value.isDouble() || !std::isfinite(value.toDouble())) return;
-            r[row][column] = value.toDouble();
-        }
-        const auto length = std::hypot(r[0][column], r[1][column], r[2][column]);
-        if (length <= 1e-9) return;
-        for (int row = 0; row < 3; ++row) r[row][column] /= length;
-    }
-
-    // Decompose R = Ry(yaw) * Rx(pitch) * Rz(roll). At the singularity use zero roll.
-    const double cosPitch = std::hypot(r[0][2], r[2][2]);
-    const double pitch = std::atan2(-r[1][2], cosPitch);
-    const bool singular = cosPitch < 1e-6;
-    const double yaw = singular ? std::atan2(-r[2][0], r[0][0]) : std::atan2(r[0][2], r[2][2]);
-    const double roll = singular ? 0.0 : std::atan2(r[1][0], r[1][1]);
-    values["/face/head/yaw"] = qRadiansToDegrees(yaw);
-    values["/face/head/pitch"] = qRadiansToDegrees(pitch);
-    values["/face/head/roll"] = qRadiansToDegrees(roll);
-}
-
-QMap<QString, double> signalsFor(const QJsonObject &frame)
-{
-    QMap<QString, double> values;
-    const auto face = frame.value("face").toArray();
-    if (frame.contains("face")) values["/face/present"] = !face.isEmpty();
-    if (!face.isEmpty()) {
-        const auto detection = face.first().toObject();
-        addHeadRotation(detection.value("matrix").toArray(), values);
-        const auto expressions = detection.value("expressions").toObject();
-        for (auto i = expressions.begin(); i != expressions.end(); ++i)
-            values["/face/" + i.key()] = i.value().toDouble();
-        const auto points = detection.value("points").toArray();
-        if (points.size() > 1) {
-            const auto nose = points.at(1).toArray();
-            values["/face/position/x"] = nose.at(0).toDouble();
-            values["/face/position/y"] = nose.at(1).toDouble();
-        }
-    }
-    const auto hands = frame.value("hands").toArray();
-    if (frame.contains("hands")) {
-        values["/hands/count"] = hands.size();
-        for (const auto *side : {"left", "right"}) values[QString("/hands/%1/present").arg(side)] = 0;
-    }
-    for (const auto &entry : hands) {
-        const auto hand = entry.toObject();
-        const auto prefix = hand.value("right").toBool() ? QString("/hands/right/") : QString("/hands/left/");
-        values[prefix + "present"] = 1;
-        values[prefix + "confidence"] = hand.value("score").toDouble();
-        const auto points = hand.value("points").toArray();
-        if (points.size() >= 9) {
-            const auto wrist = points.at(0).toArray(), thumb = points.at(4).toArray(), finger = points.at(8).toArray();
-            values[prefix + "wrist/x"] = wrist.at(0).toDouble();
-            values[prefix + "wrist/y"] = wrist.at(1).toDouble();
-            values[prefix + "pinch"] = std::clamp(1 - 6 * std::hypot(thumb.at(0).toDouble() - finger.at(0).toDouble(),
-                                                                    thumb.at(1).toDouble() - finger.at(1).toDouble()), 0.0, 1.0);
-        }
-        for (const auto *gesture : {"Closed_Fist", "Open_Palm", "Pointing_Up", "Thumb_Up", "Thumb_Down", "Victory", "ILoveYou"})
-            values[prefix + "gesture/" + QString::fromLatin1(gesture).toLower()] = hand.value("gesture").toString() == QLatin1String(gesture);
-    }
-    const auto poses = frame.value("pose").toArray();
-    if (frame.contains("pose")) values["/body/present"] = !poses.isEmpty();
-    if (!poses.isEmpty()) {
-        const auto points = poses.first().toObject().value("points").toArray();
-        for (int i = 0; i < points.size(); ++i) {
-            const auto point = points.at(i).toArray();
-            for (int axis = 0; axis < point.size() && axis < 3; ++axis)
-                values[QString("/body/landmark/%1/%2").arg(i).arg("xyz"[axis])] = point.at(axis).toDouble();
-        }
-    }
-    return values;
-}
-
-double invertedSignal(const QString &address, double value)
-{
-    if (address.startsWith("/face/head/") || address.endsWith("/z")) return -value;
-    if (address == "/hands/count") return 2.0 - value;
-    return 1.0 - value;
-}
 
 enum class VideoSource { None, Camera, File, Shared };
 
@@ -786,50 +444,28 @@ public:
                 row.meter->setEnabled(send->isChecked() && row.signal->isChecked());
             }
         });
-        connect(&worker, &QProcess::readyReadStandardOutput, this, [this] {
-            while (worker.canReadLine()) {
-                const auto result = QJsonDocument::fromJson(worker.readLine()).object();
-                if (result.value("ready").toBool()) { ready = true; status->setText("MediaPipe ready"); continue; }
-                busy = false;
-                for (auto entry = result.begin(); entry != result.end(); ++entry) {
-                    if (entry.key() == "error" || entry.key().endsWith("_error"))
-                        status->setText(entry.value().toString());
-                }
-                if (!active) continue;
-                const bool current = submittedMask == trackingMask() && submittedOptions == detectionOptions.packet()
-                    && submittedGeneration == sourceGeneration && submittedSelection == picture->roi && !picture->isDrawing();
-                const QRectF region(double(submittedRoi.x()) / submittedSource.width(),
-                                    double(submittedRoi.y()) / submittedSource.height(),
-                                    double(submittedRoi.width()) / submittedSource.width(),
-                                    double(submittedRoi.height()) / submittedSource.height());
-                picture->showFrame(submittedSource, current ? result : QJsonObject(), region);
-                if (current) {
-                    updateTelemetry(result);
-                    updateSignals(result);
-                }
+        connect(&mediapipe, &MediaPipeClient::statusChanged, this, [this](const QString &text, const QString &details) {
+            status->setText(text);
+            if (!details.isEmpty()) status->setToolTip(details);
+        });
+        connect(&mediapipe, &MediaPipeClient::resultReady, this, [this](const QJsonObject &result) {
+            if (!active) return;
+            const bool current = submittedMask == trackingMask() && submittedOptions == detectionOptions.packet()
+                && submittedGeneration == sourceGeneration && submittedSelection == picture->roi && !picture->isDrawing();
+            const QRectF region(double(submittedRoi.x()) / submittedSource.width(),
+                                double(submittedRoi.y()) / submittedSource.height(),
+                                double(submittedRoi.width()) / submittedSource.width(),
+                                double(submittedRoi.height()) / submittedSource.height());
+            picture->showFrame(submittedSource, current ? result : QJsonObject(), region);
+            if (current) {
+                updateTelemetry(result);
+                updateSignals(result);
             }
         });
-        connect(&worker, &QProcess::errorOccurred, this, [this] { status->setText(worker.errorString()); });
-        connect(&worker, &QProcess::readyReadStandardError, this, [this] {
-            workerLog = (workerLog + worker.readAllStandardError()).right(4096);
-        });
-        connect(&worker, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-                [this](int code, QProcess::ExitStatus exitStatus) {
-            ready = busy = false;
-            if (shuttingDown) return;
-            status->setText(exitStatus == QProcess::CrashExit
-                ? QStringLiteral("MediaPipe crashed (%1)").arg(code)
-                : QStringLiteral("MediaPipe exited (%1)").arg(code));
-            status->setToolTip(QString::fromUtf8(workerLog));
-            if (!workerRetried) {
-                workerRetried = true;
-                QTimer::singleShot(250, this, [this] { startWorker(); });
-            }
-        });
-        startWorker();
+        mediapipe.start();
         clock.start();
         connect(&timer, &QTimer::timeout, this, [this] {
-            if (busy) return;
+            if (mediapipe.isBusy()) return;
             if (sharedInput) {
                 auto frame = sharedInput->frame();
                 if (sharedFlip && !frame.isNull()) {
@@ -846,7 +482,7 @@ public:
                 picture->showFrame(latest);
                 return;
             }
-            if (!ready) return;
+            if (!mediapipe.isReady()) return;
             submittedSource = std::exchange(latest, QImage()); // shown as is: no full-size format conversion
             submittedSelection = picture->roi;
             const auto &roi = submittedSelection;
@@ -874,8 +510,8 @@ public:
                                 ' ' + QByteArray::number(submittedGeneration) + '\n';
             packet.reserve(packet.size() + int(submitted.sizeInBytes()));
             packet.append(reinterpret_cast<const char *>(submitted.constBits()), submitted.sizeInBytes());
-            active = busy = true;
-            worker.write(packet);
+            active = true;
+            mediapipe.send(packet);
         });
         search->setText(settings.value("window/search").toString());
         restoreSignalRows(settings);
@@ -908,13 +544,8 @@ public:
     {
         QSettings settings;
         storeSettings(settings);
-        shuttingDown = true;
         stopSource();
-        worker.closeWriteChannel();
-        if (worker.state() != QProcess::NotRunning && !worker.waitForFinished(300)) {
-            worker.kill();
-            worker.waitForFinished(1000);
-        }
+        mediapipe.shutdown();
     }
 
 private:
@@ -1115,17 +746,6 @@ private:
         status->setText("Configuration loaded");
     }
 
-    void startWorker()
-    {
-        auto environment = QProcessEnvironment::systemEnvironment();
-        environment.insert("MPLBACKEND", "Agg");
-        if (workerRetried || !environment.contains("NYXMAP_MEDIAPIPE_DELEGATE"))
-            environment.insert("NYXMAP_MEDIAPIPE_DELEGATE", "cpu");
-        worker.setProcessEnvironment(environment);
-        const auto root = runtimeFolder();
-        worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
-    }
-
     struct Row {
         QTreeWidgetItem *item;
         QProgressBar *meter;
@@ -1145,7 +765,7 @@ private:
             sourceSize = latest.size();
             updateSizeLabel();
         }
-        if (!ready) showFrame(latest);
+        if (!mediapipe.isReady()) showFrame(latest);
     }
 
     void updateSizeLabel()
@@ -1382,8 +1002,6 @@ private:
     QSize sourceSize, analysedSize;
     QComboBox *analysisSize, *cameraQuality;
     int analysisEdge = 640;
-    QByteArray workerLog;
-    bool workerRetried = false, shuttingDown = false;
     QLineEdit *destinations, *search;
     QPushButton *send, *previewMirror, *previewLandmarks, *stopButton;
     QButtonGroup *inputModes;
@@ -1403,7 +1021,7 @@ private:
     std::unique_ptr<QCamera> camera;
     std::unique_ptr<SharedInput> sharedInput;
     VideoSource videoSource = VideoSource::None;
-    QProcess worker;
+    MediaPipeClient mediapipe;
     QUdpSocket udp;
     QTimer timer;
     QElapsedTimer clock, inferenceClock;
@@ -1415,7 +1033,7 @@ private:
     QRectF submittedSelection;
     int sourceGeneration = 0, submittedGeneration = 0;
     int submittedMask = 0;
-    bool ready = false, busy = false, active = false, sharedFlip = false;
+    bool active = false, sharedFlip = false;
 };
 } // namespace
 
@@ -1432,63 +1050,7 @@ int main(int argc, char **argv)
     QObject::connect(hints, &QStyleHints::colorSchemeChanged, &app, [&app](Qt::ColorScheme scheme) {
         applyInterfacePalette(app, scheme);
     });
-    if (app.arguments().contains("--check-mediapipe")) {
-        const auto root = runtimeFolder();
-        QProcess worker;
-        worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
-        if (!worker.waitForStarted()) return 1;
-        const QByteArray pixels(128 * 128 * 4, '\0');
-        worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
-        worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
-        worker.write(QByteArray("128 128 14 50 50 2 1\n") + pixels);
-        worker.closeWriteChannel();
-        if (!worker.waitForFinished(60000)) return 2;
-        const auto lines = worker.readAllStandardOutput().trimmed().split('\n');
-        if (lines.size() != 4 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) return 3;
-        const auto frame = QJsonDocument::fromJson(lines[1]).object();
-        if (!frame.contains("face") || !frame.contains("hands") || !frame.contains("pose")) {
-            qCritical().noquote() << lines[1];
-            return 4;
-        }
-        for (int i = 2; i < 4; ++i) {
-            const auto sample = QJsonDocument::fromJson(lines[i]).object();
-            if (!sample.value("inference_ms").isDouble() || !sample.contains("face") ||
-                !sample.contains("hands") || !sample.contains("pose")) {
-                qCritical().noquote() << lines[i];
-                return 13;
-            }
-        }
-        QList<Destination> destinations;
-        if (!parseDestinations("127.0.0.1:5000 10.0.0.2:9999", destinations) || destinations.size() != 2) return 5;
-        destinations.clear();
-        QUdpSocket first, second, sender;
-        if (!first.bind(QHostAddress::LocalHost, 0) || !second.bind(QHostAddress::LocalHost, 0)) return 6;
-        const auto addresses = QString("127.0.0.1:%1 127.0.0.1:%2").arg(first.localPort()).arg(second.localPort());
-        if (!parseDestinations(addresses, destinations) || destinations.size() != 2) return 7;
-        const auto datagram = osc::encode({"/test", "f", {0.5}});
-        for (const auto &destination : destinations)
-            if (sender.writeDatagram(datagram, destination.ip, destination.port) != datagram.size()) return 8;
-        for (auto *receiver : {&first, &second}) {
-            if (!receiver->hasPendingDatagrams() && !receiver->waitForReadyRead(3000)) return 9;
-            QByteArray received(receiver->pendingDatagramSize(), Qt::Uninitialized);
-            receiver->readDatagram(received.data(), received.size());
-            if (received != datagram) return 10;
-        }
-        // A scaled yaw of 30 degrees with translation verifies matrix layout and units.
-        const QJsonArray matrix{std::sqrt(3.0), 0, 1, 12, 0, 2, 0, -3,
-                                -1, 0, std::sqrt(3.0), -40, 0, 0, 0, 1};
-        const auto head = signalsFor(QJsonObject{{"face", QJsonArray{QJsonObject{{"matrix", matrix}}}}});
-        if (std::abs(head.value("/face/head/yaw") - 30.0) > 1e-6
-            || !head.contains("/face/head/pitch") || std::abs(head.value("/face/head/pitch")) > 1e-6
-            || !head.contains("/face/head/roll") || std::abs(head.value("/face/head/roll")) > 1e-6)
-            return 11;
-        if (invertedSignal("/face/jawOpen", 0.25) != 0.75
-            || invertedSignal("/face/head/yaw", -30.0) != 30.0
-            || invertedSignal("/hands/count", 0.0) != 2.0)
-            return 12;
-        qInfo("Packaged inference, head rotation, inversion and two OSC destinations passed");
-        return 0;
-    }
+    if (app.arguments().contains("--check-mediapipe")) return runSelfTest();
     QSettings settings;
     if (settings.allKeys().isEmpty()) {
         const QSettings legacy("PixelStereo", "MP_OSC");

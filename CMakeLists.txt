@@ -7,7 +7,9 @@ file(WRITE "${CMAKE_BINARY_DIR}/application.json"
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
-qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp OscCodec.cpp SliderField.cpp SliderField.h)
+qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp OscCodec.cpp SliderField.cpp SliderField.h
+    Theme.cpp Destinations.cpp MediaPipeClient.cpp MediaPipeClient.h MediaPipeRuntime.cpp Signals.cpp SelfTest.cpp
+    SignalWidgets.h VideoPreview.h)
 qt_add_resources(MpOsc "branding" PREFIX "/" FILES assets/MpOsc.png)
 if(APPLE)
     target_sources(MpOsc PRIVATE assets/MpOsc.icns)
