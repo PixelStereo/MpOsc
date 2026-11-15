@@ -45,7 +45,7 @@ def run(folder):
     def points(landmarks):
         return [[p.x, p.y, p.z] for p in landmarks]
 
-    def infer(task, rgba, annotated):
+    def infer(task, rgba, frame):
         if task not in tasks:
             class_name, filename = MODELS[task]
             model = folder / filename
@@ -85,7 +85,10 @@ def run(folder):
         if delegates[task] == "GPU" and sys.platform == "darwin":
             image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=rgba)
         else:
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgba[:, :, :3]))
+            # One RGB copy per frame, shared by every requested task.
+            if "rgb" not in frame:
+                frame["rgb"] = np.ascontiguousarray(rgba[:, :, :3])
+            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame["rgb"])
         detector = tasks[task]
         if task in ("hands", "gestures"):
             result = detector.detect_for_video(image, timestamp) if task == "hands" else detector.recognize_for_video(image, timestamp)
@@ -96,15 +99,6 @@ def run(folder):
                  if task == "gestures" and result.gestures[i] else ""}
                 for i, hand in enumerate(result.hand_landmarks)
             ]}
-            if annotated is not None and result.hand_landmarks:
-                def draw_hands(annotated):
-                    for hand in result.hand_landmarks:
-                        vision.drawing_utils.draw_landmarks(
-                            annotated, hand, vision.HandLandmarksConnections.HAND_CONNECTIONS,
-                            landmark_drawing_spec=vision.drawing_styles.get_default_hand_landmarks_style(),
-                            connection_drawing_spec=vision.drawing_styles.get_default_hand_connections_style(),
-                        )
-                draw_hands(annotated)
             return output
         if task == "face":
             result = detector.detect_for_video(image, timestamp)
@@ -114,30 +108,9 @@ def run(folder):
                  "matrix": result.facial_transformation_matrixes[i].flatten().tolist()}
                 for i, face in enumerate(result.face_landmarks)
             ]}
-            if annotated is not None and result.face_landmarks:
-                def draw_face(annotated):
-                    connections = vision.FaceLandmarksConnections
-                    for face in result.face_landmarks:
-                        vision.drawing_utils.draw_landmarks(
-                            annotated, face, connections.FACE_LANDMARKS_CONTOURS,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=vision.drawing_styles.get_default_face_mesh_contours_style(),
-                        )
-                        vision.drawing_utils.draw_landmarks(
-                            annotated, face, connections.FACE_LANDMARKS_LEFT_IRIS + connections.FACE_LANDMARKS_RIGHT_IRIS,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=vision.drawing_styles.get_default_face_mesh_iris_connections_style(),
-                        )
-                draw_face(annotated)
             return output
         if task == "pose":
             result = detector.detect_for_video(image, timestamp)
-            if annotated is not None:
-                for pose in result.pose_landmarks:
-                    vision.drawing_utils.draw_landmarks(
-                        annotated, pose, vision.PoseLandmarksConnections.POSE_LANDMARKS,
-                        landmark_drawing_spec=vision.drawing_styles.get_default_pose_landmarks_style(),
-                    )
             return {"pose": [{"points": points(pose), "world": points(result.pose_world_landmarks[i]),
                               "visibility": [p.visibility for p in pose]}
                              for i, pose in enumerate(result.pose_landmarks)]}
@@ -194,14 +167,11 @@ def run(folder):
             timestamp = max(timestamp + 1, time.monotonic_ns() // 1_000_000)
             started = time.perf_counter()
             result = {}
-            annotated = None
-            if mask & (1 << 12):
-                import cv2
-                annotated = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+            frame = {}
             for bit, task in enumerate(MODELS):
                 if mask & (1 << bit):
                     try:
-                        result.update(infer(task, rgba, annotated if task != "hands" or not mask & 2 else None))
+                        result.update(infer(task, rgba, frame))
                         result[task + "_delegate"] = delegates[task]
                     except Exception as error:
                         if backend == "auto" and delegates.get(task) == "GPU":
@@ -210,17 +180,13 @@ def run(folder):
                             with suppress(Exception):
                                 tasks.pop(task).close()
                             try:
-                                result.update(infer(task, rgba, annotated if task != "hands" or not mask & 2 else None))
+                                result.update(infer(task, rgba, frame))
                                 result[task + "_delegate"] = delegates[task]
                                 continue
                             except Exception as fallback_error:
                                 error = fallback_error
                         result[task + "_error"] = str(error)
             result["inference_ms"] = (time.perf_counter() - started) * 1000
-            if annotated is not None:
-                ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
-                if ok:
-                    result["preview_jpeg"] = base64.b64encode(jpeg.tobytes()).decode("ascii")
             reply(result)
         except Exception as error:
             reply({"error": str(error)})

@@ -431,6 +431,14 @@ public:
         for (const auto &device : QMediaDevices::videoInputs()) cameraChoice->addItem(device.description(), device.id());
         const int previousCamera = cameraChoice->findData(settings.value("video/cameraId").toByteArray());
         if (previousCamera >= 0) cameraChoice->setCurrentIndex(previousCamera);
+        cameraQuality = new QComboBox;
+        cameraQuality->setToolTip("Resolution requested from the camera. Lower values reduce USB bandwidth and decoding work. "
+                                  "Detection runs on a smaller copy anyway (see Analysis size).");
+        cameraQuality->setAccessibleName("Camera resolution");
+        cameraQuality->addItem("Camera: auto (up to 1080p)", qint64(1920) * 1080);
+        cameraQuality->addItem("Camera: maximum", qint64(0));
+        cameraQuality->addItem("Camera: 720p", qint64(1280) * 720);
+        cameraQuality->addItem("Camera: 480p", qint64(640) * 480);
         auto *startCamera = new QPushButton("Start camera");
         startCamera->setEnabled(cameraChoice->count() != 0);
         auto *open = new QPushButton("Browse…");
@@ -439,6 +447,7 @@ public:
         fileLayout->addWidget(fileName, 1);
         fileLayout->addWidget(open);
         cameraLayout->addWidget(cameraChoice, 1);
+        cameraLayout->addWidget(cameraQuality);
         cameraLayout->addWidget(startCamera);
         auto *stop = new QPushButton("Stop");
         faceTracking = new QPushButton("Face");
@@ -549,7 +558,25 @@ public:
                          &DetectionOptions::hands, 1);
         maxHands->setEnabled(handTracking->isChecked());
         connect(handTracking, &QPushButton::toggled, maxHands, &QWidget::setEnabled);
+        analysisSize = new QComboBox;
+        analysisSize->setAccessibleName("Analysis size");
+        analysisSize->setToolTip("Longest side of the image sent to MediaPipe. The models resize their input to a few hundred "
+                                 "pixels internally, so a larger image mostly costs time. The preview always stays full size, "
+                                 "and the ROI is cropped from the full-resolution frame before resizing.");
+        analysisSize->addItem("Original (no resize)", 0);
+        analysisSize->addItem("1280 px", 1280);
+        analysisSize->addItem("960 px", 960);
+        analysisSize->addItem("640 px (recommended)", 640);
+        analysisSize->addItem("480 px", 480);
+        analysisSize->addItem("320 px", 320);
+        detection->addWidget(new QLabel("Analysis size"));
+        detection->addWidget(analysisSize);
         loadDetectionOptions(settings);
+        connect(analysisSize, &QComboBox::currentIndexChanged, this, [this] {
+            analysisEdge = analysisSize->currentData().toInt();
+            ++sourceGeneration;
+            updateSizeLabel();
+        });
 
         auto *oscBar = new QHBoxLayout;
         destinations = new QLineEdit(settings.value("destinations", "127.0.0.1:5000").toString());
@@ -684,13 +711,22 @@ public:
                     stopSource();
                     capture.setCamera(nullptr);
                     camera.reset(new QCamera(device));
+                    // The largest landscape format within the chosen limit; when every format is larger, the smallest one.
+                    const qint64 limit = cameraQuality->currentData().toLongLong();
                     QCameraFormat preferred;
+                    bool preferredWithinLimit = false;
                     for (const auto &format : device.videoFormats()) {
                         const auto size = format.resolution();
                         if (size.width() <= size.height()) continue;
+                        const qint64 pixels = qint64(size.width()) * size.height();
+                        const bool within = limit == 0 || pixels <= limit;
                         const auto current = preferred.resolution();
-                        if (preferred.isNull() || qint64(size.width()) * size.height() > qint64(current.width()) * current.height())
+                        const qint64 best = qint64(current.width()) * current.height();
+                        if (preferred.isNull() || (within && (!preferredWithinLimit || pixels > best))
+                            || (!within && !preferredWithinLimit && pixels < best)) {
                             preferred = format;
+                            preferredWithinLimit = within;
+                        }
                     }
                     if (!preferred.isNull()) camera->setCameraFormat(preferred);
                     connect(camera.get(), &QCamera::errorOccurred, this, [this](QCamera::Error, const QString &error) {
@@ -728,6 +764,10 @@ public:
             stopButton->setEnabled(true);
             player.setSource(QUrl::fromLocalFile(path));
             player.play();
+        });
+        connect(cameraQuality, &QComboBox::currentIndexChanged, this, [this, startCamera] {
+            QSettings().setValue("video/cameraQuality", cameraQuality->currentData());
+            if (videoSource == VideoSource::Camera) startCamera->click();
         });
         connect(stop, &QPushButton::clicked, this, [this] { stopSource(); });
         connect(&player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &error) { status->setText(error); });
@@ -807,13 +847,21 @@ public:
                 return;
             }
             if (!ready) return;
-            submittedSource = std::exchange(latest, QImage()).convertToFormat(QImage::Format_RGBA8888);
+            submittedSource = std::exchange(latest, QImage()); // shown as is: no full-size format conversion
             submittedSelection = picture->roi;
             const auto &roi = submittedSelection;
             const int width = submittedSource.width(), height = submittedSource.height();
             submittedRoi = QRectF(roi.x() * width, roi.y() * height, roi.width() * width, roi.height() * height)
                                .toAlignedRect().intersected(submittedSource.rect());
+            // Crop at full resolution, then shrink to the analysis size (never enlarged), then convert only that copy.
             submitted = submittedRoi == submittedSource.rect() ? submittedSource : submittedSource.copy(submittedRoi);
+            if (analysisEdge > 0 && std::max(submitted.width(), submitted.height()) > analysisEdge)
+                submitted = submitted.scaled(analysisEdge, analysisEdge, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            submitted = submitted.convertToFormat(QImage::Format_RGBA8888);
+            if (analysedSize != submitted.size()) {
+                analysedSize = submitted.size();
+                updateSizeLabel();
+            }
             if (previousRoi != submittedRoi) {
                 previousRoi = submittedRoi;
                 ++sourceGeneration;
@@ -824,8 +872,8 @@ public:
             QByteArray packet = QByteArray::number(submitted.width()) + ' ' + QByteArray::number(submitted.height()) +
                                 ' ' + QByteArray::number(submittedMask) + ' ' + submittedOptions +
                                 ' ' + QByteArray::number(submittedGeneration) + '\n';
-            for (int y = 0; y < submitted.height(); ++y)
-                packet.append(reinterpret_cast<const char *>(submitted.constScanLine(y)), submitted.width() * 4);
+            packet.reserve(packet.size() + int(submitted.sizeInBytes()));
+            packet.append(reinterpret_cast<const char *>(submitted.constBits()), submitted.sizeInBytes());
             active = busy = true;
             worker.write(packet);
         });
@@ -847,6 +895,8 @@ public:
         settings.setValue("video/minDetection", detectionOptions.confidence);
         settings.setValue("video/minTracking", detectionOptions.tracking);
         settings.setValue("video/maxHands", detectionOptions.hands);
+        settings.setValue("video/analysisEdge", analysisEdge);
+        settings.setValue("video/cameraQuality", cameraQuality->currentData());
         settings.setValue("window/mirror", previewMirror->isChecked());
         settings.setValue("window/landmarks", previewLandmarks->isChecked());
         settings.setValue("video/roi", picture->roi);
@@ -948,6 +998,12 @@ private:
         minDetection->setValue(detectionOptions.confidence / 100.0);
         minTracking->setValue(detectionOptions.tracking / 100.0);
         maxHands->setValue(detectionOptions.hands);
+        const QSignalBlocker blockAnalysis(analysisSize), blockCamera(cameraQuality);
+        const int edge = analysisSize->findData(settings.value("video/analysisEdge", 640).toInt());
+        analysisSize->setCurrentIndex(edge >= 0 ? edge : analysisSize->findData(640));
+        analysisEdge = analysisSize->currentData().toInt();
+        const int quality = cameraQuality->findData(settings.value("video/cameraQuality", qint64(1920) * 1080).toLongLong());
+        cameraQuality->setCurrentIndex(quality >= 0 ? quality : 0);
     }
 
     void updateTelemetry(const QJsonObject &result)
@@ -1087,11 +1143,24 @@ private:
         latest = std::move(frame);
         if (latest.size() != sourceSize) {
             sourceSize = latest.size();
-            resolution->setText(QStringLiteral("%1 × %2 px (%3 pixels)")
-                .arg(sourceSize.width()).arg(sourceSize.height())
-                .arg(locale().toString(qint64(sourceSize.width()) * sourceSize.height())));
+            updateSizeLabel();
         }
         if (!ready) showFrame(latest);
+    }
+
+    void updateSizeLabel()
+    {
+        if (sourceSize.isEmpty()) { resolution->setText("No video frame"); return; }
+        auto text = QStringLiteral("Source %1 × %2 px").arg(sourceSize.width()).arg(sourceSize.height());
+        if (!analysedSize.isEmpty()) {
+            const auto share = 100.0 * analysedSize.width() * analysedSize.height()
+                             / (double(sourceSize.width()) * sourceSize.height());
+            text += QStringLiteral("  →  analysed %1 × %2 px%3 (%4 % of the source pixels)")
+                .arg(analysedSize.width()).arg(analysedSize.height())
+                .arg(picture->roi == QRectF(0, 0, 1, 1) ? QString() : QStringLiteral(", ROI only"))
+                .arg(share, 0, 'f', share < 10 ? 1 : 0);
+        }
+        resolution->setText(text);
     }
 
     void stopSource()
@@ -1103,8 +1172,8 @@ private:
         player.stop();
         latest = {};
         active = false;
-        sourceSize = {};
-        resolution->setText("No video frame");
+        sourceSize = analysedSize = {};
+        updateSizeLabel();
         telemetry->setText("Waiting for input");
         inferenceClock.invalidate();
         inferenceRate = 0;
@@ -1310,7 +1379,9 @@ private:
     QComboBox *cameraChoice;
     QPushButton *faceTracking, *handTracking, *bodyTracking;
     QLabel *resolution, *telemetry;
-    QSize sourceSize;
+    QSize sourceSize, analysedSize;
+    QComboBox *analysisSize, *cameraQuality;
+    int analysisEdge = 640;
     QByteArray workerLog;
     bool workerRetried = false, shuttingDown = false;
     QLineEdit *destinations, *search;
@@ -1367,7 +1438,7 @@ int main(int argc, char **argv)
         worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
         if (!worker.waitForStarted()) return 1;
         const QByteArray pixels(128 * 128 * 4, '\0');
-        worker.write(QByteArray("128 128 4110 40 60 1 0\n") + pixels);
+        worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
         worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
         worker.write(QByteArray("128 128 14 50 50 2 1\n") + pixels);
         worker.closeWriteChannel();
@@ -1375,14 +1446,14 @@ int main(int argc, char **argv)
         const auto lines = worker.readAllStandardOutput().trimmed().split('\n');
         if (lines.size() != 4 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) return 3;
         const auto frame = QJsonDocument::fromJson(lines[1]).object();
-        if (!frame.contains("face") || !frame.contains("hands") || !frame.contains("pose") || !frame.contains("preview_jpeg")) {
+        if (!frame.contains("face") || !frame.contains("hands") || !frame.contains("pose")) {
             qCritical().noquote() << lines[1];
             return 4;
         }
         for (int i = 2; i < 4; ++i) {
             const auto sample = QJsonDocument::fromJson(lines[i]).object();
             if (!sample.value("inference_ms").isDouble() || !sample.contains("face") ||
-                !sample.contains("hands") || !sample.contains("pose") || sample.contains("preview_jpeg")) {
+                !sample.contains("hands") || !sample.contains("pose")) {
                 qCritical().noquote() << lines[i];
                 return 13;
             }
@@ -1415,7 +1486,7 @@ int main(int argc, char **argv)
             || invertedSignal("/face/head/yaw", -30.0) != 30.0
             || invertedSignal("/hands/count", 0.0) != 2.0)
             return 12;
-        qInfo("Packaged inference, annotations, head rotation, inversion and two OSC destinations passed");
+        qInfo("Packaged inference, head rotation, inversion and two OSC destinations passed");
         return 0;
     }
     QSettings settings;
