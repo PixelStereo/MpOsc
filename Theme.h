@@ -4,5 +4,6 @@
 #include <QColor>
 #include <QIcon>
 
-void applyInterfacePalette(QApplication &app, Qt::ColorScheme scheme);
+// The interface is always dark, in the tones of NyxMap.
+void applyInterfacePalette(QApplication &app);
 QIcon signalPinIcon(bool pinned, const QColor &color);

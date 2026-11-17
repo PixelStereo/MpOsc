@@ -6,6 +6,7 @@
 #include "SelfTest.h"
 #include "SignalPanel.h"
 #include "Signals.h"
+#include "About.h"
 #include "Theme.h"
 #include "VideoInput.h"
 #include "VideoPreview.h"
@@ -183,33 +184,18 @@ public:
         stopButton->setEnabled(false);
 
         auto *detection = section("Detection");
-        for (auto *button : {faceTracking, handTracking, bodyTracking}) detection->addWidget(button);
-        detection->addSpacing(8);
-        const auto field = [&](const QString &label, const QString &tip, int max, int min,
-                               int DetectionOptions::*member, int scale) {
-            auto *slider = new SliderField;
-            slider->setRange(double(min) / scale, double(max) / scale);
-            slider->setDecimals(scale == 1 ? 0 : 2);
-            slider->setSingleStep(scale == 1 ? 1 : .01);
-            slider->setMinimumWidth(78);
-            slider->setMaximumWidth(130);
-            slider->setAccessibleName(label);
-            slider->setToolTip(tip);
-            detection->addWidget(new QLabel(label));
-            detection->addWidget(slider, 1);
-            connect(slider, &SliderField::editingFinished, this, [this, member, scale](double value) {
-                detectionOptions.*member = qRound(value * scale);
-            });
-            return slider;
+        // A caption right above its control, left-aligned with it.
+        const auto captioned = [](const QString &label, QWidget *control) {
+            auto *cell = new QWidget;
+            auto *column = new QVBoxLayout(cell);
+            column->setContentsMargins(0, 0, 0, 0);
+            column->setSpacing(3);
+            auto *caption = new QLabel(label);
+            caption->setObjectName("caption");
+            column->addWidget(caption);
+            column->addWidget(control);
+            return cell;
         };
-        minDetection = field("Min detection", "Confidence needed to acquire a new subject.", 100, 0,
-                             &DetectionOptions::confidence, 100);
-        minTracking = field("Min tracking", "Confidence needed to keep tracking between frames.", 100, 0,
-                            &DetectionOptions::tracking, 100);
-        maxHands = field("Max hands", "Maximum simultaneous hand detections.", 2, 1,
-                         &DetectionOptions::hands, 1);
-        maxHands->setEnabled(handTracking->isChecked());
-        connect(handTracking, &QPushButton::toggled, maxHands, &QWidget::setEnabled);
         analysisSize = new QComboBox;
         analysisSize->setAccessibleName("Analysis size");
         analysisSize->setToolTip("Longest side of the image sent to MediaPipe. The models resize their input to a few hundred "
@@ -221,8 +207,47 @@ public:
         analysisSize->addItem("640 px (recommended)", 640);
         analysisSize->addItem("480 px", 480);
         analysisSize->addItem("320 px", 320);
-        detection->addWidget(new QLabel("Analysis size"));
-        detection->addWidget(analysisSize);
+        // One row: the analysis size, the Face / Hands / Body buttons beside it, then the three settings
+        detection->addWidget(captioned("Analysis size", analysisSize), 0, Qt::AlignTop);
+        detection->addSpacing(8);
+        auto *trackingButtons = new QHBoxLayout;
+        for (auto *button : {faceTracking, handTracking, bodyTracking}) {
+            button->setMinimumSize(78, 36); // large enough to hit quickly during a live show
+            auto font = button->font();
+            font.setPointSizeF(font.pointSizeF() * 1.1);
+            button->setFont(font);
+            trackingButtons->addWidget(button);
+        }
+        auto *buttonColumn = new QVBoxLayout; // bottom-aligned with the combo, whose caption sits above it
+        buttonColumn->addStretch(1);
+        buttonColumn->addLayout(trackingButtons);
+        detection->addLayout(buttonColumn);
+        detection->addSpacing(16);
+        const auto field = [&](const QString &label, const QString &tip, int max, int min,
+                               int DetectionOptions::*member, int scale) {
+            auto *slider = new SliderField;
+            slider->setRange(double(min) / scale, double(max) / scale);
+            slider->setDecimals(scale == 1 ? 0 : 2);
+            slider->setSingleStep(scale == 1 ? 1 : .01);
+            slider->setMinimumWidth(110);
+            slider->setMaximumWidth(130);
+            slider->setAccessibleName(label);
+            slider->setToolTip(tip);
+            detection->addWidget(captioned(label, slider), 0, Qt::AlignTop);
+            connect(slider, &SliderField::editingFinished, this, [this, member, scale](double value) {
+                detectionOptions.*member = qRound(value * scale);
+            });
+            return slider;
+        };
+        minDetection = field("Min detection", "Confidence needed to acquire a new subject.", 100, 0,
+                             &DetectionOptions::confidence, 100);
+        minTracking = field("Min tracking", "Confidence needed to keep tracking between frames.", 100, 0,
+                            &DetectionOptions::tracking, 100);
+        maxHands = field("Max hands", "Maximum simultaneous hand detections.", 2, 1,
+                         &DetectionOptions::hands, 1);
+        detection->addStretch(1);
+        maxHands->setEnabled(handTracking->isChecked());
+        connect(handTracking, &QPushButton::toggled, maxHands, &QWidget::setEnabled);
         loadDetectionOptions(settings);
         connect(analysisSize, &QComboBox::currentIndexChanged, this, [this] {
             analysisEdge = analysisSize->currentData().toInt();
@@ -484,14 +509,7 @@ private:
         auto *about = bar->addMenu("&Help")->addAction("About MpOsc");
         about->setMenuRole(QAction::AboutRole);
         connect(about, &QAction::triggered, this, [this] {
-            QMessageBox dialog(this);
-            dialog.setWindowTitle("About MpOsc");
-            dialog.setIconPixmap(QApplication::windowIcon().pixmap(96, 96));
-            dialog.setText(QStringLiteral("<h2>MpOsc</h2><p>Motion Processing OSC · %1</p>")
-                               .arg(QApplication::applicationVersion()));
-            dialog.setInformativeText("Turn movement into live OSC controls.\nBuilt by Pixel Stereo.");
-            dialog.setStandardButtons(QMessageBox::Ok);
-            dialog.exec();
+            showAbout(this);
         });
     }
 
@@ -725,11 +743,10 @@ int main(int argc, char **argv)
     app.setWindowIcon(QIcon(":/assets/MpOsc.png"));
     app.setOrganizationName("PixelStereo");
     app.setStyle("Fusion");
-    auto *hints = QGuiApplication::styleHints();
-    applyInterfacePalette(app, hints->colorScheme());
-    QObject::connect(hints, &QStyleHints::colorSchemeChanged, &app, [&app](Qt::ColorScheme scheme) {
-        applyInterfacePalette(app, scheme);
-    });
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark); // always dark, whatever the system
+#endif
+    applyInterfacePalette(app);
     if (app.arguments().contains("--check-mediapipe")) return runSelfTest();
     QSettings settings;
     if (settings.allKeys().isEmpty()) {

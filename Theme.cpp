@@ -2,25 +2,23 @@
 
 #include <QtWidgets>
 
-void applyInterfacePalette(QApplication &app, Qt::ColorScheme scheme)
+void applyInterfacePalette(QApplication &app)
 {
-    const bool dark = scheme == Qt::ColorScheme::Dark;
-    const QColor text(dark ? "#f0f4fa" : "#182234");
-    const QColor muted(dark ? "#b7c4d6" : "#49586c");
-    const QColor accent(dark ? "#435a7d" : "#a9bfdf");
+    // Graphite: the soft rounded look with light borders, in neutral greys (no blue cast). Always dark.
+    const QColor text("#f2f2f3"), muted("#bdbdc2"), accent("#55555c");
     QPalette palette;
-    palette.setColor(QPalette::Window, QColor(dark ? "#252c37" : "#f2f5f9"));
-    palette.setColor(QPalette::Base, QColor(dark ? "#1d2430" : "#ffffff"));
-    palette.setColor(QPalette::AlternateBase, QColor(dark ? "#303a49" : "#e9edf4"));
-    palette.setColor(QPalette::Button, QColor(dark ? "#303947" : "#ffffff"));
-    palette.setColor(QPalette::Mid, QColor(dark ? "#7789a3" : "#64758b"));
-    palette.setColor(QPalette::Light, QColor(dark ? "#4b586c" : "#ffffff"));
-    palette.setColor(QPalette::Midlight, QColor(dark ? "#3a4759" : "#e7ecf4"));
-    palette.setColor(QPalette::Dark, QColor(dark ? "#121822" : "#a6b3c6"));
-    palette.setColor(QPalette::Shadow, QColor(dark ? "#0b1018" : "#73849b"));
+    palette.setColor(QPalette::Window, QColor("#262628"));
+    palette.setColor(QPalette::Base, QColor("#1e1e20"));
+    palette.setColor(QPalette::AlternateBase, QColor("#323235"));
+    palette.setColor(QPalette::Button, QColor("#313134"));
+    palette.setColor(QPalette::Mid, QColor("#7b7b82"));
+    palette.setColor(QPalette::Light, QColor("#4c4c52"));
+    palette.setColor(QPalette::Midlight, QColor("#3b3b40"));
+    palette.setColor(QPalette::Dark, QColor("#141416"));
+    palette.setColor(QPalette::Shadow, QColor("#0c0c0d"));
     palette.setColor(QPalette::Highlight, accent);
-    palette.setColor(QPalette::Link, QColor(dark ? "#adc8ef" : "#315a89"));
-    palette.setColor(QPalette::LinkVisited, QColor(dark ? "#cdb8ef" : "#624587"));
+    palette.setColor(QPalette::Link, QColor("#d4d4d8"));
+    palette.setColor(QPalette::LinkVisited, QColor("#b5b5bb"));
     palette.setColor(QPalette::ToolTipBase, palette.color(QPalette::Base));
     palette.setColor(QPalette::ToolTipText, text);
     palette.setColor(QPalette::PlaceholderText, muted);
@@ -34,6 +32,7 @@ void applyInterfacePalette(QApplication &app, Qt::ColorScheme scheme)
     QString style = QStringLiteral(R"(
 QGroupBox#section { border:1px solid @border; border-radius:8px; margin-top:9px; }
 QGroupBox#section::title { color:@text; subcontrol-origin:margin; left:11px; padding:0 5px; font-weight:600; }
+QLabel#caption { color:@muted; }
 QPushButton#toggle { background:@button; color:@text; border:1px solid @border; border-radius:6px; padding:5px 9px; }
 QPushButton#toggle:hover, QPushButton#toggle:focus { border-color:@focus; }
 QPushButton#toggle:checked { background:@fill; color:@text; border-color:@focus; font-weight:600; }

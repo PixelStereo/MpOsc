@@ -29,7 +29,7 @@ protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter painter(this);
-        painter.fillRect(rect(), QColor("#12151b"));
+        painter.fillRect(rect(), QColor("#161618"));
         if (image.isNull()) {
             painter.setPen(QColor("#e1e1e4"));
             painter.drawText(rect(), Qt::AlignCenter, "Choose a video input to begin");
@@ -53,10 +53,10 @@ protected:
             shade.addRect(area);
             shade.addRect(selection);
             painter.fillPath(shade, QColor(0, 0, 0, 214));
-            painter.setPen(QPen(QColor("#a5c5e9"), 1.2, editRoi ? Qt::DashLine : Qt::SolidLine));
+            painter.setPen(QPen(QColor("#d4d4d8"), 1.2, editRoi ? Qt::DashLine : Qt::SolidLine));
             painter.drawRect(selection.adjusted(1, 1, -1, -1));
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor("#a5c5e9"));
+            painter.setBrush(QColor("#d4d4d8"));
             for (const auto &corner : {selection.topLeft(), selection.topRight(), selection.bottomLeft(), selection.bottomRight()})
                 painter.drawEllipse(corner, 2.5, 2.5);
         }
