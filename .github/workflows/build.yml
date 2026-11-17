@@ -98,6 +98,7 @@ jobs:
             Select-Object -First 1
           if (!$crt) { throw "Microsoft Visual C++ runtime DLLs are missing" }
           Copy-Item (Join-Path $crt.FullName "*.dll") dist/package/ -Force
+          Get-ChildItem dist/package -Recurse -Filter "vc_redist*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force
           foreach ($file in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
             if (!(Test-Path "dist/package/$file")) { throw "Missing Windows runtime: $file" }
           }
@@ -108,12 +109,12 @@ jobs:
           choco install nsis --yes --no-progress
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $compiler = Join-Path ${env:ProgramFiles(x86)} "NSIS/makensis.exe"
-          & $compiler "/DAPP_NAME=$appName" "/DAPP_VERSION=$($app.version)" "/DINSTALLER_NAME=$installerName" packaging/windows.nsi
+          $setup = Join-Path $PWD "dist/$installerName"
+          & $compiler "/DPRODUCT=MpOsc" "/DAPP_VERSION=$($app.version)" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist\package" "/DOUTPUT=$setup" "/DICON=$PWD\assets\MpOsc.ico" packaging/windows.nsi
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-          $setup = (Resolve-Path "dist/$installerName").Path
           $clean = Join-Path $env:RUNNER_TEMP "MpOsc installed"
-          $installer = Start-Process -FilePath $setup -ArgumentList "/S /D=$clean" -Wait -PassThru
+          $installer = Start-Process -FilePath $setup -ArgumentList "/S /CurrentUser /D=$clean" -Wait -PassThru
           if ($installer.ExitCode) { throw "Installer failed: $($installer.ExitCode)" }
           $exe = Join-Path $clean "app/$appName.exe"
           if (!(Test-Path $exe)) { throw "Installed executable is missing" }
