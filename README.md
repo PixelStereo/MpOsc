@@ -20,7 +20,7 @@ Choose a video source, enter your OSC destinations, click the signals you want, 
 |---|---|
 | `src/app` | the entry point and the `--check-mediapipe` self-test |
 | `src/engine` | no widgets: video sources (camera, file, Syphon, Spout), the MediaPipe worker, signals, OSC destinations |
-| `src/ui` | the window's parts: signal tables, video preview and tracking overlay, theme, About, the slider field |
+| `src/ui` | the window's parts: signal tables, video preview and tracking overlay, theme, About (the slider field comes from `third_party/pxs`) |
 | `packaging` | the macOS `Info.plist` template (the Windows installer comes from `third_party/pxs`) |
 
 ## License
