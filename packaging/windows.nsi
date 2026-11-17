@@ -13,6 +13,8 @@ UninstPage instfiles
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MpOsc"
 
 Section
+  ; The executable carries the version: an upgrade must not leave the previous one beside the new one
+  RMDir /r "$INSTDIR\app"
   SetOutPath "$INSTDIR\app"
   File /r "..\dist\package\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
