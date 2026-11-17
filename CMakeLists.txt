@@ -10,9 +10,15 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 # Shared Pixel Stereo code (the OSC codec), pinned as a submodule
 set(PXS_BUILD_TESTS OFF)
 add_subdirectory(third_party/pxs EXCLUDE_FROM_ALL)
-qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp SliderField.cpp SliderField.h
-    Theme.cpp Destinations.cpp MediaPipeClient.cpp MediaPipeClient.h MediaPipeRuntime.cpp Signals.cpp SelfTest.cpp
-    SignalWidgets.h VideoPreview.h SignalPanel.cpp SignalPanel.h VideoInput.cpp VideoInput.h About.cpp About.h)
+qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
+    src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
+    src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
+    src/engine/MediaPipeRuntime.cpp src/engine/Signals.cpp src/engine/VideoInput.cpp src/engine/VideoInput.h
+    src/ui/About.cpp src/ui/About.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
+    src/ui/SliderField.cpp src/ui/SliderField.h src/ui/Theme.cpp src/ui/TrackingOverlay.cpp
+    src/ui/VideoPreview.h)
+# Sources include each other by file name: engine (no widgets), ui (widgets), app (entry point and self-test)
+target_include_directories(MpOsc PRIVATE src/app src/engine src/ui)
 qt_add_resources(MpOsc "branding" PREFIX "/" FILES assets/MpOsc.png)
 if(APPLE)
     target_sources(MpOsc PRIVATE assets/MpOsc.icns)
@@ -25,12 +31,12 @@ endif()
 set_target_properties(MpOsc PROPERTIES AUTOMOC ON)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe_worker.py)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" WORKER)
-configure_file(Worker.h.in generated/Worker.h @ONLY)
+configure_file(src/engine/Worker.h.in generated/Worker.h @ONLY)
 target_include_directories(MpOsc PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc)
 set_target_properties(MpOsc PROPERTIES OUTPUT_NAME "${MPOSC_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER com.pixelstereo.mp-osc
-    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in")
 
 if(APPLE)
     enable_language(C OBJC OBJCXX)
@@ -51,8 +57,8 @@ if(APPLE)
                            $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
     target_link_libraries(mposc_syphon PUBLIC "-framework Cocoa" "-framework OpenGL"
                           "-framework IOSurface" "-framework Metal")
-    target_sources(MpOsc PRIVATE SyphonInput.mm)
-    set_source_files_properties(SyphonInput.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(MpOsc PRIVATE src/engine/SyphonInput.mm)
+    set_source_files_properties(src/engine/SyphonInput.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(MpOsc PRIVATE mposc_syphon)
 elseif(WIN32)
     set(spout_sdk "${CMAKE_CURRENT_SOURCE_DIR}/third_party/spout2/SPOUTSDK")
@@ -68,6 +74,6 @@ elseif(WIN32)
     target_include_directories(mposc_spout PUBLIC "${spout_dx}" "${spout_gl}")
     target_compile_definitions(mposc_spout PUBLIC SPOUT_BUILD_STATIC NOMINMAX)
     target_link_libraries(mposc_spout PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
-    target_sources(MpOsc PRIVATE SpoutInput.cpp)
+    target_sources(MpOsc PRIVATE src/engine/SpoutInput.cpp)
     target_link_libraries(MpOsc PRIVATE mposc_spout)
 endif()
