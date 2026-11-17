@@ -2,7 +2,7 @@
 
 MpOsc reuses the MediaPipe worker, OSC codec and portable runtime packaging from
 [NyxMap](https://github.com/PixelStereo/NyxMap) by Pixel Stereo. See `LICENSE` for
-MpOsc's GPL-3.0 license.
+MpOsc's AGPL-3.0 license.
 
 The Qt desktop runtime is deployed using Qt's deployment tools. The MediaPipe
 runtime uses portable CPython from python-build-standalone, MediaPipe Tasks and

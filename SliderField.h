@@ -1,5 +1,5 @@
 #pragma once
-// SliderField adapted from NyxMap by Pixel Stereo (GPL-3.0).
+// SliderField adapted from NyxMap by Pixel Stereo (AGPL-3.0).
 #include <QWidget>
 #include <QGradient>
 #include <vector>
