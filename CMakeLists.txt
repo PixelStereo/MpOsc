@@ -7,7 +7,10 @@ file(WRITE "${CMAKE_BINARY_DIR}/application.json"
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
-qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp OscCodec.cpp SliderField.cpp SliderField.h
+# Shared Pixel Stereo code (the OSC codec), pinned as a submodule
+set(PXS_BUILD_TESTS OFF)
+add_subdirectory(third_party/pxs EXCLUDE_FROM_ALL)
+qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE main.cpp TrackingOverlay.cpp SliderField.cpp SliderField.h
     Theme.cpp Destinations.cpp MediaPipeClient.cpp MediaPipeClient.h MediaPipeRuntime.cpp Signals.cpp SelfTest.cpp
     SignalWidgets.h VideoPreview.h SignalPanel.cpp SignalPanel.h VideoInput.cpp VideoInput.h About.cpp About.h)
 qt_add_resources(MpOsc "branding" PREFIX "/" FILES assets/MpOsc.png)
@@ -24,7 +27,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" WORKER)
 configure_file(Worker.h.in generated/Worker.h @ONLY)
 target_include_directories(MpOsc PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia)
+target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc)
 set_target_properties(MpOsc PROPERTIES OUTPUT_NAME "${MPOSC_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER com.pixelstereo.mp-osc
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
