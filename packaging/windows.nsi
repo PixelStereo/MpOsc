@@ -45,8 +45,15 @@ SetCompressor /SOLID lzma
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"
 
+; The install mode picks the default folder; a folder given on the command line (/D=<dir>, last) wins over it
+InstallDir "pxs-default-folder"
+Var RequestedDir
 Function .onInit
+  StrCpy $RequestedDir $INSTDIR
   !insertmacro MULTIUSER_INIT
+  ${If} $RequestedDir != "pxs-default-folder"
+    StrCpy $INSTDIR $RequestedDir
+  ${EndIf}
 FunctionEnd
 
 Function un.onInit
