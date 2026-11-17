@@ -1,5 +1,5 @@
 # Published tag builds identify releases; local builds always carry a revision.
-# Ordinary builds identify the preceding release and the exact source commit.
+# Ordinary builds identify the preceding release, the commits since it ("+3") and uncommitted changes ("+3+").
 set(_mposc_root "${CMAKE_CURRENT_LIST_DIR}/..")
 set(_mposc_release FALSE)
 if("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag" OR MPOSC_RELEASE_BUILD)
@@ -29,12 +29,10 @@ else()
 endif()
 set(MPOSC_VERSION "${MPOSC_BASE_VERSION}")
 if(NOT _mposc_release)
-  execute_process(COMMAND git rev-parse --short=8 HEAD WORKING_DIRECTORY "${_mposc_root}"
-    OUTPUT_VARIABLE _mposc_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  if(NOT _mposc_commit MATCHES "^[0-9a-f]+$")
-    set(_mposc_commit "unknown") # source archive without Git metadata
-  endif()
-  string(APPEND MPOSC_VERSION "_${_mposc_commit}")
+  # MPOSC_VERSION is "0.2.1+3" (3 commits after the release) or "0.2.1+3+" (with uncommitted changes)
+  include("${CMAKE_CURRENT_LIST_DIR}/PixelStereoBuildId.cmake")
+  pxs_build_suffix("${_mposc_root}" _mposc_suffix)
+  string(APPEND MPOSC_VERSION "${_mposc_suffix}")
 endif()
 set(MPOSC_APP_NAME "MpOsc ${MPOSC_VERSION}")
 # Reconfigure incremental builds after a checkout or commit, including worktrees.
