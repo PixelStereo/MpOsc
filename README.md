@@ -14,15 +14,6 @@ Choose a video source, enter your OSC destinations, click the signals you want, 
 
 <sub>Built by Pixel Stereo. Building from source? Initialize SDKs with <code>git submodule update --init</code>, then run <code>./build.sh</code>. Requires Qt 6, CMake, a C++17 compiler, and Python with <code>uv==0.9.28</code>.</sub>
 
-## Source layout
-
-| Folder | What |
-|---|---|
-| `src/app` | the entry point and the `--check-mediapipe` self-test |
-| `src/engine` | no widgets: video sources (camera, file, Syphon, Spout), the MediaPipe worker, signals, OSC destinations |
-| `src/ui` | the window's parts: signal tables, video preview and tracking overlay, theme, About (the slider field comes from `third_party/pxs`) |
-| `packaging` | the macOS `Info.plist` template (the Windows installer comes from `third_party/pxs`) |
-
 ## License
 
 AGPL-3.0, see [LICENSE](LICENSE).
