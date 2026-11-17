@@ -22,3 +22,7 @@ Choose a video source, enter your OSC destinations, click the signals you want, 
 | `src/engine` | no widgets: video sources (camera, file, Syphon, Spout), the MediaPipe worker, signals, OSC destinations |
 | `src/ui` | the window's parts: signal tables, video preview and tracking overlay, theme, About, the slider field |
 | `packaging` | the macOS `Info.plist` template (the Windows installer comes from `third_party/pxs`) |
+
+## License
+
+AGPL-3.0, see [LICENSE](LICENSE).
