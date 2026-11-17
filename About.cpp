@@ -52,7 +52,7 @@ void showAbout(QWidget *parent)
     QString html = QStringLiteral(
         "<h3 style='margin:0 0 4px'>License</h3>"
         "<p style='margin:0'>MpOsc is free software, released under the "
-        "<a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">GNU General Public License, version 3</a>. "
+        "<a href=\"https://www.gnu.org/licenses/agpl-3.0.html\">GNU Affero General Public License, version 3</a>. "
         "You may use, study, share and modify it under the terms of that license; it comes without any warranty. "
         "The full text is the <code>LICENSE</code> file shipped with the application and in the "
         "<a href=\"https://github.com/PixelStereo/MpOsc\">source repository</a>.</p>"
