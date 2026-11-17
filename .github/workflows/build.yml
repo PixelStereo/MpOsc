@@ -110,7 +110,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $compiler = Join-Path ${env:ProgramFiles(x86)} "NSIS/makensis.exe"
           $setup = Join-Path $PWD "dist/$installerName"
-          & $compiler "/DPRODUCT=MpOsc" "/DAPP_VERSION=$($app.version)" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist\package" "/DOUTPUT=$setup" "/DICON=$PWD\assets\MpOsc.ico" packaging/windows.nsi
+          & $compiler "/DPRODUCT=MpOsc" "/DAPP_VERSION=$($app.version)" "/DAPP_EXE=$appName.exe" "/DPAYLOAD=$PWD\dist\package" "/DOUTPUT=$setup" "/DICON=$PWD\assets\MpOsc.ico" third_party/pxs/packaging/windows.nsi
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           $clean = Join-Path $env:RUNNER_TEMP "MpOsc installed"

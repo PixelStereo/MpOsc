@@ -5,3 +5,6 @@
 	path = third_party/spout2
 	url = https://github.com/leadedge/Spout2.git
 	shallow = true
+[submodule "third_party/pxs"]
+	path = third_party/pxs
+	url = https://github.com/PixelStereo/pxs.git
