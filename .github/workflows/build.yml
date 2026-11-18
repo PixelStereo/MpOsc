@@ -19,10 +19,18 @@ jobs:
           - platform: macOS
             runner: macos-latest
             qt-arch: clang_64
+            arch: arm64
+          # The Intel build is attached to the release when it passes; it does not block the release when it fails
+          - platform: macOS Intel
+            runner: macos-15-intel
+            qt-arch: clang_64
+            arch: x64
+            optional: true
           - platform: Windows
             runner: windows-2025
             qt-arch: win64_msvc2022_64
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.optional || false }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,9 +62,10 @@ jobs:
           app_name=$(jq -r .name build/application.json)
           version=$(jq -r .version build/application.json)
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; fi
-          archive="dist/MpOsc-macos-arm64-$version.zip"
+          archive="dist/MpOsc-macos-${{ matrix.arch }}-$version.zip"
           app="build/$app_name.app"
-          file "$app/Contents/MacOS/$app_name" | grep -q arm64
+          want=arm64; if [[ "${{ matrix.arch }}" == x64 ]]; then want=x86_64; fi
+          file "$app/Contents/MacOS/$app_name" | grep -q "$want"
           macdeployqt "$app" -always-overwrite
           test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
           python -m pip install uv==0.9.28
@@ -126,7 +135,7 @@ jobs:
         with:
           name: MpOsc-${{ matrix.platform }}
           path: |
-            dist/MpOsc-macos-arm64-*.zip
+            dist/MpOsc-macos-*.zip
             dist/MpOsc-windows-x64-*-Setup.exe
           if-no-files-found: error
 
@@ -148,6 +157,8 @@ jobs:
           set -euo pipefail
           assets=("dist/MpOsc-macos-arm64-$GITHUB_REF_NAME.zip" "dist/MpOsc-windows-x64-$GITHUB_REF_NAME-Setup.exe")
           for asset in "${assets[@]}"; do test -s "$asset"; done
+          # The Intel zip, when its build passed
+          if [ -s "dist/MpOsc-macos-x64-$GITHUB_REF_NAME.zip" ]; then assets+=("dist/MpOsc-macos-x64-$GITHUB_REF_NAME.zip"); fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
