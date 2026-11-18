@@ -8,5 +8,5 @@ permissions:
   contents: write
 jobs:
   update:
-    uses: PixelStereo/pxs/.github/workflows/release-downloads.yml@d1adbd94f6211de5905eed5aa5e91c026f23e5c6
-    with: { app: MpOsc, platforms: "mac,win", pxs-ref: d1adbd94f6211de5905eed5aa5e91c026f23e5c6 }
+    uses: PixelStereo/pxs/.github/workflows/release-downloads.yml@v0.15.0
+    with: { app: MpOsc, platforms: "mac,win", pxs-ref: v0.15.0 }
