@@ -229,8 +229,8 @@ public:
             slider->setRange(double(min) / scale, double(max) / scale);
             slider->setDecimals(scale == 1 ? 0 : 2);
             slider->setSingleStep(scale == 1 ? 1 : .01);
-            slider->setMinimumWidth(110);
-            slider->setMaximumWidth(130);
+            slider->setMinimumWidth(170);
+            slider->setMaximumWidth(220);
             slider->setAccessibleName(label);
             slider->setToolTip(tip);
             detection->addWidget(captioned(label, slider), 0, Qt::AlignTop);
