@@ -742,7 +742,6 @@ int main(int argc, char **argv)
     app.setApplicationVersion(QStringLiteral(MPOSC_VERSION));
     app.setWindowIcon(QIcon(":/assets/MpOsc.png"));
     app.setOrganizationName("PixelStereo");
-    app.setStyle("Fusion");
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark); // always dark, whatever the system
 #endif
