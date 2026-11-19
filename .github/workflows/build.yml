@@ -19,6 +19,7 @@ jobs:
           - platform: macOS
             runner: macos-latest
             qt-arch: clang_64
+            arch: arm64
           - platform: Windows
             runner: windows-2025
             qt-arch: win64_msvc2022_64
@@ -54,7 +55,7 @@ jobs:
           app_name=$(jq -r .name build/application.json)
           version=$(jq -r .version build/application.json)
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; fi
-          archive="dist/MpOsc-macos-arm64-$version.zip"
+          archive="dist/MpOsc-macos-${{ matrix.arch }}-$version.zip"
           app="build/$app_name.app"
           file "$app/Contents/MacOS/$app_name" | grep -q arm64
           macdeployqt "$app" -always-overwrite
@@ -126,7 +127,7 @@ jobs:
         with:
           name: MpOsc-${{ matrix.platform }}
           path: |
-            dist/MpOsc-macos-arm64-*.zip
+            dist/MpOsc-macos-*.zip
             dist/MpOsc-windows-x64-*-Setup.exe
           if-no-files-found: error
 
