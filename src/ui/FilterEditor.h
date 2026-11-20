@@ -3,7 +3,12 @@
 #include "SignalFilters.h"
 
 #include <QWidget>
+#include <functional>
 #include <vector>
+
+class QMenu;
+// The filters in a menu: by group, each with what it does in a line and, in its tooltip, when to use it
+void addFilterActions(QMenu *menu, const std::vector<InteractionFilter> &kinds, const std::function<void(InteractionFilter)> &chosen);
 
 class QLabel;
 class QListWidget;
@@ -26,6 +31,9 @@ public:
 signals:
     // `final`: the end of a change (a drag of a setting is not)
     void chainChanged(const QString &address, const FilterChain &chain, bool final);
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void rebuild();

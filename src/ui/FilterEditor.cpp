@@ -14,6 +14,25 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+void addFilterActions(QMenu *menu, const std::vector<InteractionFilter> &kinds, const std::function<void(InteractionFilter)> &chosen)
+{
+    menu->setToolTipsVisible(true);
+    for (const auto &group : filterGroups()) {
+        QMenu *sub = nullptr;
+        for (auto kind : kinds) {
+            const auto info = filterInfo(kind);
+            if (info.group != group) continue;
+            if (!sub) {
+                sub = menu->addMenu(group);
+                sub->setToolTipsVisible(true);
+            }
+            auto *action = sub->addAction(QStringLiteral("%1  ·  %2").arg(interactionFilterName(kind), info.summary));
+            action->setToolTip(info.detail);
+            QObject::connect(action, &QAction::triggered, menu, [chosen, kind] { chosen(kind); });
+        }
+    }
+}
+
 namespace {
 QString typeText(SignalType type)
 {
@@ -32,8 +51,31 @@ public:
     QCheckBox *enabled;
     QLabel *name;
     QWidget *body;
+    QLabel *summary;
+    bool unfolded;
 
-    FilterCard(const InteractionStage &stage, bool unfolded)
+    // The height it takes in `width` pixels: the description wraps, so it is as tall as the width makes it
+    int heightFor(int width)
+    {
+        const int text = std::max(60, width - 12 - 24);
+        summary->setFixedHeight(summary->fontMetrics().boundingRect(0, 0, text, 100000, Qt::TextWordWrap, summary->text()).height() + 2);
+        // Added up by hand: the layouts of a card that is not shown yet answer too small
+        auto *outer = static_cast<QVBoxLayout *>(layout());
+        auto *inner = static_cast<QVBoxLayout *>(body->layout());
+        int height = outer->contentsMargins().top() + outer->contentsMargins().bottom() + outer->itemAt(0)->sizeHint().height();
+        if (unfolded) {
+            int rows = 0;
+            for (int i = 0; i < inner->count(); ++i) {
+                auto *item = inner->itemAt(i);
+                height += item->widget() == summary ? summary->height() : 26; // a setting: a name and a field
+                ++rows;
+            }
+            height += outer->spacing() + std::max(0, rows - 1) * inner->spacing();
+        }
+        return height;
+    }
+
+    FilterCard(const InteractionStage &stage, bool open) : unfolded(open)
     {
         auto *column = new QVBoxLayout(this);
         column->setContentsMargins(6, 4, 6, 4);
@@ -63,6 +105,12 @@ public:
         new QVBoxLayout(body);
         body->layout()->setContentsMargins(24, 0, 0, 0);
         body->layout()->setSpacing(4);
+        const auto info = filterInfo(stage.kind);
+        summary = new QLabel(info.detail);
+        summary->setWordWrap(true);
+        summary->setEnabled(false); // muted
+        body->layout()->addWidget(summary);
+        name->setToolTip(info.detail);
         body->setVisible(unfolded);
         column->addWidget(body);
     }
@@ -148,7 +196,7 @@ void FilterEditor::setSignal(const QString &address, const FilterChain &filters)
                    "a filter to all of its signals.");
     if (has) {
         auto *menu = new QMenu(add);
-        menu->addAction("Invert", this, [this] {
+        auto *invert = menu->addAction("Invert  ·  flips it (1 − x, on ↔ off, −x for an angle)", this, [this] {
             for (auto &stage : invertChain(signalAddress)) {
                 chain.push_back(stage);
                 open.push_back(false);
@@ -156,8 +204,10 @@ void FilterEditor::setSignal(const QString &address, const FilterChain &filters)
             rebuild();
             edited(true);
         });
+        invert->setToolTip("Turns the signal upside down: on becomes off, high becomes low.");
+        menu->setToolTipsVisible(true);
         menu->addSeparator();
-        for (auto kind : filtersOffered(address)) menu->addAction(interactionFilterName(kind), this, [this, kind] { addFilter(kind); });
+        addFilterActions(menu, filtersOffered(address), [this](InteractionFilter kind) { addFilter(kind); });
         delete add->menu();
         add->setMenu(menu);
     }
@@ -186,8 +236,17 @@ void FilterEditor::fitItems()
 {
     for (int row = 0; row < list->count(); ++row) {
         auto *item = list->item(row);
-        if (auto *widget = list->itemWidget(item)) item->setSizeHint(widget->sizeHint());
+        auto *card = dynamic_cast<FilterCard *>(list->itemWidget(item));
+        if (!card) continue;
+        const int width = std::max(120, list->viewport()->width() - 2 * list->spacing());
+        item->setSizeHint(QSize(width, card->heightFor(width)));
     }
+}
+
+void FilterEditor::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    fitItems();
 }
 
 void FilterEditor::rebuild()
@@ -208,13 +267,14 @@ void FilterEditor::addCard(int index)
     card->setAttribute(Qt::WA_StyledBackground);
     card->setStyleSheet("QWidget#filterCard { border:1px solid palette(mid); border-radius:5px; }");
     list->setItemWidget(item, card);
-    connect(card->fold, &QToolButton::clicked, this, [this, card, item, index] {
-        const bool unfolded = !card->body->isVisible();
+    connect(card->fold, &QToolButton::clicked, this, [this, card, index] {
+        const bool unfolded = !card->unfolded;
+        card->unfolded = unfolded;
         open[size_t(index)] = unfolded;
         card->body->setVisible(unfolded);
         card->fold->setArrowType(unfolded ? Qt::DownArrow : Qt::RightArrow);
         card->layout()->activate();
-        item->setSizeHint(card->sizeHint());
+        fitItems();
     });
     connect(card->enabled, &QCheckBox::toggled, this, [this, index](bool on) {
         chain[size_t(index)].enabled = on;

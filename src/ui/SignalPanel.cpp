@@ -381,16 +381,13 @@ void SignalPanel::familyMenu(const QString &family, const QPoint &globalPosition
     for (const auto &address : members)
         for (auto kind : filtersOffered(address))
             if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) kinds.push_back(kind);
-    std::sort(kinds.begin(), kinds.end());
-    for (auto kind : kinds) {
-        add->addAction(interactionFilterName(kind), this, [each, kind] {
-            each([kind](const QString &address, FilterChain chain) {
-                const auto offered = filtersOffered(address);
-                if (std::find(offered.begin(), offered.end(), kind) != offered.end()) chain.push_back(InteractionStage::made(kind));
-                return chain;
-            });
+    addFilterActions(add, kinds, [each](InteractionFilter kind) {
+        each([kind](const QString &address, FilterChain chain) {
+            const auto offered = filtersOffered(address);
+            if (std::find(offered.begin(), offered.end(), kind) != offered.end()) chain.push_back(InteractionStage::made(kind));
+            return chain;
         });
-    }
+    });
     auto *copy = menu.addAction(selected.isEmpty() ? QStringLiteral("Give them the chain of the selected signal")
                                                    : QStringLiteral("Give them the chain of %1").arg(selected));
     copy->setEnabled(!selected.isEmpty() && rows.contains(selected));

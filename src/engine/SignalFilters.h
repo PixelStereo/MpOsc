@@ -4,6 +4,7 @@
 
 #include <Interactions.h>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <optional>
 #include <vector>
@@ -14,6 +15,13 @@ using FilterChain = std::vector<InteractionStage>;
 
 // The filters that mean something for this signal (the filters over time suit every type; the others, the type they suit)
 std::vector<InteractionFilter> filtersOffered(const QString &address);
+// The mini documentation of a filter, to choose one: its group (Smooth, Time, Trigger, Shape), what it does in a line, and when to use it
+struct FilterInfo {
+    QString group, summary, detail;
+};
+FilterInfo filterInfo(InteractionFilter kind);
+QStringList filterGroups(); // in the order the menus list them
+
 // What "Invert" is for this signal: 1 − x for a switch or a measure of 0 to 1, −x for an angle or a depth, 2 − x for the hands count
 FilterChain invertChain(const QString &address);
 // An angle (head yaw, pitch, roll) is in degrees, not in 0 to 1
