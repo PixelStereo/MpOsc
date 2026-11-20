@@ -253,6 +253,10 @@ SignalPanel::Row SignalPanel::makeRow(const QString &address)
         return field;
     };
     auto row = Row{item, meter, raw, invert, signal, addTimeField(3, "/attack"), addTimeField(4, "/release")};
+    if (signalType(address) == SignalType::Bool) { // a switch is not smoothed
+        row.attack->setEnabled(false);
+        row.release->setEnabled(false);
+    }
     if (pinned) resizePinnedTable();
     return row;
 }
@@ -278,6 +282,25 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
             if (angle) text += QStringLiteral("°");
             return text;
         };
+        const SignalType type = signalType(i.key());
+        if (type == SignalType::Bool) { // a switch: on or off, nothing to smooth
+            const bool on = (raw >= 0.5) != i->invert->isChecked();
+            i->raw->setText(available ? (raw >= 0.5 ? QStringLiteral("on") : QStringLiteral("off")) : QStringLiteral("—"));
+            i->filtered = on ? 1 : 0;
+            i->initialized = available;
+            i->meter->setValue(on ? 1000 : 0);
+            i->meter->setFormat(available ? (on ? QStringLiteral("on") : QStringLiteral("off")) : QStringLiteral("—"));
+            if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
+            if (!available && !i->sent) continue;
+            const auto packet = osc::encode({i.key(), (available ? on : false) ? "T" : "F", {}});
+            bool delivered = true;
+            for (const auto &target : targets) {
+                if (udp.writeDatagram(packet, target.ip, target.port) < 0) { ++errors; delivered = false; }
+                else ++messages;
+            }
+            if (delivered) i->sent = available;
+            continue;
+        }
         i->raw->setText(formatValue(raw));
         const double input = i->invert->isChecked() ? invertedSignal(i.key(), raw) : raw;
         const double difference = input - i->filtered;
@@ -291,10 +314,12 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
             ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
             : 1000 * std::clamp(output, 0.0, 1.0)));
         i->meter->setFormat(formatValue(output));
+        if (available && signalFired) signalFired(i.key(), output);
         if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
         if (!available && !i->sent) continue;
         const double outgoing = available ? output : 0;
-        const auto packet = osc::encode({i.key(), "f", {outgoing}});
+        const auto packet = type == SignalType::Int ? osc::encode({i.key(), "i", {qRound(outgoing)}})
+                                                    : osc::encode({i.key(), "f", {outgoing}});
         bool delivered = true;
         for (const auto &target : targets) {
             if (udp.writeDatagram(packet, target.ip, target.port) < 0) { ++errors; delivered = false; }

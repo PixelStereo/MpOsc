@@ -68,6 +68,16 @@ int runSelfTest()
         || invertedSignal("/face/head/yaw", -30.0) != 30.0
         || invertedSignal("/hands/count", 0.0) != 2.0)
         return 12;
+    // Switches are switches, a count is an integer, the rest are measures
+    if (signalType("/hands/left/gesture/thumb_up") != SignalType::Bool || signalType("/hands/right/present") != SignalType::Bool
+        || signalType("/face/present") != SignalType::Bool || signalType("/body/present") != SignalType::Bool
+        || signalType("/hands/count") != SignalType::Int || signalType("/hands/left/pinch") != SignalType::Float
+        || signalType("/face/jawOpen") != SignalType::Float || signalTypeTag(SignalType::Bool) != "T")
+        return 13;
+    {
+        const auto on = osc::decode(osc::encode({"/hands/left/gesture/victory", "T", {}}));
+        if (!on || on->types != "T" || on->args.value(0).toBool() != true) return 14;
+    }
     qInfo("Packaged inference, head rotation, inversion and two OSC destinations passed");
     return 0;
 }

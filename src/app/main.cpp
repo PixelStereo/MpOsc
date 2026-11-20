@@ -432,8 +432,9 @@ public:
         // The signals are listed in the namespace (what MpOsc sends, to the destinations it has itself) before the rows
         // saved in the settings are made
         signalPanel->setSignalKnown([this](const QString &address) {
-            if (!tree.find(address)) tree.addSignal(address, "f", "A tracking signal MpOsc sends to its destinations");
+            if (!tree.find(address)) tree.addSignal(address, signalTypeTag(signalType(address)), "A tracking signal MpOsc sends to its destinations");
         });
+        signalPanel->setSignalFired([this](const QString &address, double value) { tree.fire(address, {QVariant(value)}); });
         signalPanel->restoreRows(settings);
         exposeControls(settings);
         timer.start(33);
