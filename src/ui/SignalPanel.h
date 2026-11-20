@@ -9,6 +9,7 @@
 #include <QTreeWidget>
 #include <QUdpSocket>
 #include <QWidget>
+#include <functional>
 
 class QCheckBox;
 class QLabel;
@@ -32,6 +33,8 @@ public:
     void resetValues();
     // Smooths and sends the signals of one MediaPipe result; returns the status line to show.
     QString update(const QJsonObject &frame, const QString &destinations, bool sendEnabled);
+    // Told of every signal the panel knows, once its row exists (what the OSCQuery namespace lists)
+    void setSignalKnown(std::function<void(const QString &address)> callback);
 
 private:
     struct Row {
@@ -55,5 +58,6 @@ private:
     QString query;
     QUdpSocket udp;
     QElapsedTimer clock;
+    std::function<void(const QString &)> signalKnown;
     bool sending = false;
 };

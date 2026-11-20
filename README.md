@@ -14,6 +14,22 @@ On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows 
 
 Choose a video source, enter your OSC destinations, click the signals you want, then turn on **Send OSC**. Save your setup as a `.mposc` file to recall your settings later.
 
+## Drive it from anywhere
+
+MpOsc is an OSCQuery device like every other Pixel Stereo application: it announces itself on the network, and any OSCQuery client (Ossia Score, Chataigne, Kadran, your own script) finds it, reads its tree and drives it. Ports **47821** (OSC) and **47822** (OSCQuery), or the next free ones.
+
+| Address | What |
+|---|---|
+| `/osc/send`, `/osc/destinations` | arm the output, say where it goes |
+| `/detection/confidence`, `/detection/tracking`, `/detection/hands` | the detection thresholds |
+| `/analysis/size` | the size of the copy the detection runs on |
+| `/tracking/face`, `/tracking/hands`, `/tracking/body` | what to track |
+| `/preview/mirror`, `/preview/landmarks` | the preview |
+| `/video/stop`, `/video/camera/start` | the source |
+| `/face/…`, `/hands/…`, `/body/…` | every signal MpOsc sends, listed so you know what to map |
+
+Writing an address does exactly what a click does.
+
 <sub>Built by Pixel Stereo. Building from source? Initialize SDKs with <code>git submodule update --init</code>, then run <code>./build.sh</code>. Requires Qt 6, CMake, a C++17 compiler, and Python with <code>uv==0.9.28</code>.</sub>
 
 ## License

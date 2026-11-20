@@ -9,6 +9,9 @@
 #include "About.h"
 #include "Theme.h"
 #include "VideoInput.h"
+#include <pxs/Bind.h>
+#include <pxs/OscService.h>
+#include <pxs/Tree.h>
 #include "VideoPreview.h"
 #include "Worker.h"
 #include "MpOscVersion.h"
@@ -98,6 +101,7 @@ public:
         cameraQuality->addItem("Camera: 720p", qint64(1280) * 720);
         cameraQuality->addItem("Camera: 480p", qint64(640) * 480);
         auto *startCamera = new QPushButton("Start camera");
+        startCameraButton = startCamera;
         startCamera->setEnabled(cameraChoice->count() != 0);
         auto *open = new QPushButton("Browse…");
         auto *fileName = new QLabel("Choose a movie file");
@@ -425,7 +429,13 @@ public:
             mediapipe.send(packet);
         });
         signalPanel->setFilter(settings.value("window/search").toString());
+        // The signals are listed in the namespace (what MpOsc sends, to the destinations it has itself) before the rows
+        // saved in the settings are made
+        signalPanel->setSignalKnown([this](const QString &address) {
+            if (!tree.find(address)) tree.addSignal(address, "f", "A tracking signal MpOsc sends to its destinations");
+        });
         signalPanel->restoreRows(settings);
+        exposeControls(settings);
         timer.start(33);
     }
 
@@ -460,6 +470,30 @@ public:
     }
 
 private:
+    // What the interface has is reachable like every other Pixel Stereo application: OSC and OSCQuery, each parameter
+    // going through its own widget, so that writing it from outside does what a click does
+    void exposeControls(const QSettings &settings)
+    {
+        pxs::bindToggle(tree, "/osc/send", send, "Send the enabled signals to the destinations");
+        pxs::bindText(tree, "/osc/destinations", destinations, "host:port entries separated by spaces");
+        pxs::bindNumber(tree, "/detection/confidence", minDetection, "Confidence needed to acquire a new subject");
+        pxs::bindNumber(tree, "/detection/tracking", minTracking, "Confidence needed to keep tracking between frames");
+        pxs::bindNumber(tree, "/detection/hands", maxHands, "Maximum simultaneous hand detections");
+        pxs::bindChoice(tree, "/analysis/size", analysisSize, "The size of the copy the detection runs on");
+        pxs::bindToggle(tree, "/tracking/face", faceTracking, "Track faces");
+        pxs::bindToggle(tree, "/tracking/hands", handTracking, "Track hands");
+        pxs::bindToggle(tree, "/tracking/body", bodyTracking, "Track the body");
+        pxs::bindToggle(tree, "/preview/mirror", previewMirror, "Mirror the preview only; OSC coordinates stay unchanged");
+        pxs::bindToggle(tree, "/preview/landmarks", previewLandmarks, "Show landmarks and skeletons on the preview");
+        pxs::bindAction(tree, "/video/stop", stopButton, "Stop the video source");
+        pxs::bindAction(tree, "/video/camera/start", startCameraButton, "Start the selected camera");
+        service = std::make_unique<pxs::OscService>(&tree, QStringLiteral(MPOSC_APP_NAME));
+        if (!service->start(quint16(settings.value("control/oscPort", 47821).toUInt()),
+                            quint16(settings.value("control/oscQueryPort", 47822).toUInt())) &&
+            !service->start(0, 0))
+            service.reset();
+    }
+
     void selectInputMode(const QString &key)
     {
         int id = 0;
@@ -710,7 +744,9 @@ private:
     int analysisEdge = 640;
     QLineEdit *destinations;
     SignalPanel *signalPanel;
-    QPushButton *send, *previewMirror, *previewLandmarks, *stopButton;
+    QPushButton *send, *previewMirror, *previewLandmarks, *stopButton, *startCameraButton;
+    pxs::Tree tree;
+    std::unique_ptr<pxs::OscService> service;
     QButtonGroup *inputModes;
     QStackedWidget *inputPages;
     SliderField *minDetection, *minTracking, *maxHands;
