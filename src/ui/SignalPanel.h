@@ -35,6 +35,8 @@ public:
     QString update(const QJsonObject &frame, const QString &destinations, bool sendEnabled);
     // Told of every signal the panel knows, once its row exists (what the OSCQuery namespace lists)
     void setSignalKnown(std::function<void(const QString &address)> callback);
+    // Told each value a live signal takes (after its filter), whether or not it is sent: what listens to the namespace follows it
+    void setSignalFired(std::function<void(const QString &address, double value)> callback) { signalFired = std::move(callback); }
 
 private:
     struct Row {
@@ -59,5 +61,6 @@ private:
     QUdpSocket udp;
     QElapsedTimer clock;
     std::function<void(const QString &)> signalKnown;
+    std::function<void(const QString &, double)> signalFired;
     bool sending = false;
 };

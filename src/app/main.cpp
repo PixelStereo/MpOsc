@@ -434,6 +434,7 @@ public:
         signalPanel->setSignalKnown([this](const QString &address) {
             if (!tree.find(address)) tree.addSignal(address, "f", "A tracking signal MpOsc sends to its destinations");
         });
+        signalPanel->setSignalFired([this](const QString &address, double value) { tree.fire(address, {QVariant(value)}); });
         signalPanel->restoreRows(settings);
         exposeControls(settings);
         timer.start(33);

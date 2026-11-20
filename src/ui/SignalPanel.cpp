@@ -291,6 +291,7 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
             ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
             : 1000 * std::clamp(output, 0.0, 1.0)));
         i->meter->setFormat(formatValue(output));
+        if (available && signalFired) signalFired(i.key(), output);
         if (!armed || !i->signal->isChecked()) { i->sent = false; continue; }
         if (!available && !i->sent) continue;
         const double outgoing = available ? output : 0;
