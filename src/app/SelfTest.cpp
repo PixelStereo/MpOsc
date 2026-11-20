@@ -75,8 +75,10 @@ int runSelfTest()
         || signalType("/face/jawOpen") != SignalType::Float || signalTypeTag(SignalType::Bool) != "T")
         return 13;
     {
-        const auto on = osc::decode(osc::encode({"/hands/left/gesture/victory", "T", {}}));
-        if (!on || on->types != "T" || on->args.value(0).toBool() != true) return 14;
+        std::vector<osc::Message> on;
+        if (!osc::decode(osc::encode({"/hands/left/gesture/victory", "T", {}}), on) || on.size() != 1 || on[0].types != "T"
+            || !on[0].args.value(0).toBool())
+            return 14;
     }
     qInfo("Packaged inference, head rotation, inversion and two OSC destinations passed");
     return 0;
