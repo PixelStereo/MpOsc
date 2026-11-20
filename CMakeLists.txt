@@ -33,7 +33,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" WORKER)
 configure_file(src/engine/Worker.h.in generated/Worker.h @ONLY)
 target_include_directories(MpOsc PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets)
+target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets pxs::tree pxs::bind pxs::oscquery)
 set_target_properties(MpOsc PROPERTIES OUTPUT_NAME "${MPOSC_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER com.pixelstereo.mp-osc
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in")

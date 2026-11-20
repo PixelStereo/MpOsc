@@ -157,8 +157,16 @@ void SignalPanel::moveSignal(const QString &address, bool pinned)
     resizePinnedTable();
 }
 
+void SignalPanel::setSignalKnown(std::function<void(const QString &)> callback)
+{
+    signalKnown = std::move(callback);
+    if (signalKnown)
+        for (auto i = rows.cbegin(); i != rows.cend(); ++i) signalKnown(i.key());
+}
+
 SignalPanel::Row SignalPanel::makeRow(const QString &address)
 {
+    if (signalKnown) signalKnown(address);
     const auto settingsKey = QStringLiteral("signals") + address;
     QSettings settings;
     const bool pinned = settings.value(settingsKey + "/pinned", false).toBool();
