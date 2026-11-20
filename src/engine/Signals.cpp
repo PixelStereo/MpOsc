@@ -85,9 +85,21 @@ QMap<QString, double> signalsFor(const QJsonObject &frame)
     return values;
 }
 
-double invertedSignal(const QString &address, double value)
+SignalType signalType(const QString &address)
 {
-    if (address.startsWith("/face/head/") || address.endsWith("/z")) return -value;
-    if (address == "/hands/count") return 2.0 - value;
-    return 1.0 - value;
+    if (address == QLatin1String("/hands/count")) return SignalType::Int;
+    if (address.endsWith(QLatin1String("/present")) || address.contains(QLatin1String("/gesture/"))) return SignalType::Bool;
+    return SignalType::Float;
+}
+
+QString signalTypeTag(SignalType type)
+{
+    return type == SignalType::Bool ? QStringLiteral("T") : type == SignalType::Int ? QStringLiteral("i") : QStringLiteral("f");
+}
+
+QString signalFamily(const QString &address)
+{
+    for (const auto *family : {"/face", "/hands/left", "/hands/right", "/body"})
+        if (address.startsWith(QString::fromLatin1(family) + '/')) return QString::fromLatin1(family);
+    return QStringLiteral("/hands");
 }

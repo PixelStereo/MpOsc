@@ -31,14 +31,39 @@ private:
     void refreshIcon() { setIcon(signalPinIcon(isChecked(), QApplication::palette().color(QPalette::Link))); }
 };
 
+// A row of a signal (under its family, or alone in the pinned table), sorted by its address
 class SignalItem final : public QTreeWidgetItem
 {
 public:
-    SignalItem(QTreeWidget *tree, const QString &address) : QTreeWidgetItem(tree)
+    SignalItem(QTreeWidget *tree, const QString &address) : QTreeWidgetItem(tree) { init(address); }
+    SignalItem(QTreeWidgetItem *family, const QString &address) : QTreeWidgetItem(family) { init(address); }
+
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        return data(0, Qt::UserRole).toString() < other.data(0, Qt::UserRole).toString();
+    }
+
+private:
+    void init(const QString &address)
     {
         setData(0, Qt::UserRole, address);
         setData(0, Qt::AccessibleTextRole, address);
         setSizeHint(0, QSize(0, 26));
+    }
+};
+
+// The header of a family of signals (/face, /hands/left…): folds its rows, sorted by name
+class FamilyItem final : public QTreeWidgetItem
+{
+public:
+    FamilyItem(QTreeWidget *tree, const QString &family) : QTreeWidgetItem(tree)
+    {
+        setData(0, Qt::UserRole, family);
+        setFlags(flags() & ~Qt::ItemIsSelectable);
+        setSizeHint(0, QSize(0, 26));
+        QFont bold = font(0);
+        bold.setBold(true);
+        setFont(0, bold);
     }
 
     bool operator<(const QTreeWidgetItem &other) const override

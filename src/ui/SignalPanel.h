@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SignalFilters.h"
+
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QLineEdit>
@@ -8,16 +10,17 @@
 #include <QString>
 #include <QTreeWidget>
 #include <QUdpSocket>
+#include <QVariant>
 #include <QWidget>
 #include <functional>
 
+class FamilyItem;
+class FilterEditor;
 class QCheckBox;
-class QLabel;
 class QProgressBar;
-class QPushButton;
-class SliderField;
 
-// The signal tables (pinned and others), their per-signal Invert / Attack / Release settings and the OSC output.
+// The signal tables (pinned, then the others by family), a chain of filters per signal edited at the right of them, and
+// the OSC output of what the chains give.
 class SignalPanel : public QWidget {
 public:
     explicit SignalPanel(QWidget *parent = nullptr);
@@ -31,36 +34,48 @@ public:
     void setSending(bool enabled);
     void resetSent();
     void resetValues();
-    // Smooths and sends the signals of one MediaPipe result; returns the status line to show.
+    // Filters and sends the signals of one MediaPipe result; returns the status line to show.
     QString update(const QJsonObject &frame, const QString &destinations, bool sendEnabled);
     // Told of every signal the panel knows, once its row exists (what the OSCQuery namespace lists)
     void setSignalKnown(std::function<void(const QString &address)> callback);
-    // Told each value a live signal takes (after its filter), whether or not it is sent: what listens to the namespace follows it
-    void setSignalFired(std::function<void(const QString &address, double value)> callback) { signalFired = std::move(callback); }
+    // Told each value a live signal takes (after its filters, a bool, an int or a double as the signal is), whether or not it is sent:
+    // what listens to the namespace follows it
+    void setSignalFired(std::function<void(const QString &address, const QVariant &value)> callback) { signalFired = std::move(callback); }
+    // The chain of a signal, as it is now
+    FilterChain chainOf(const QString &address) const;
 
 private:
     struct Row {
-        QTreeWidgetItem *item;
-        QProgressBar *meter;
-        QLabel *raw;
-        QCheckBox *invert;
-        QPushButton *signal;
-        SliderField *attack, *release;
-        double filtered = 0;
-        bool initialized = false, sent = false;
+        QTreeWidgetItem *item = nullptr;
+        QProgressBar *meter = nullptr;
+        QCheckBox *send = nullptr;
+        SignalFilter filter;
+        bool pinned = false, initialized = false, sent = false;
+        int level = 0;
+        QString raw = QStringLiteral("—"), shown = QStringLiteral("—");
     };
 
     void resizePinnedTable();
     void moveSignal(const QString &address, bool pinned);
     Row makeRow(const QString &address);
+    void buildItem(const QString &address, Row &row);
+    void removeItem(Row &row);
+    FamilyItem *familyItem(const QString &family);
+    void applyQuery();
+    void select(const QString &address);
+    void setChain(const QString &address, FilterChain chain, bool save);
+    void showBadge(Row &row);
+    void familyMenu(const QString &family, const QPoint &globalPosition);
 
     QLineEdit *search;
     QTreeWidget *table, *pinnedTable;
+    FilterEditor *editor;
     QMap<QString, Row> rows;
-    QString query;
+    QMap<QString, FamilyItem *> families;
+    QString query, selected;
     QUdpSocket udp;
     QElapsedTimer clock;
     std::function<void(const QString &)> signalKnown;
-    std::function<void(const QString &, double)> signalFired;
+    std::function<void(const QString &, const QVariant &)> signalFired;
     bool sending = false;
 };
