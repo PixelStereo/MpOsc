@@ -7,11 +7,6 @@ void applyInterfacePalette(QApplication &app)
 {
     // The palette and the style sheet of the checkable buttons, sections and captions come from pxs; this is MpOsc's own
     pxs::apply(app, pxs::graphite(), QStringLiteral(R"(
-QPushButton#signalName { background:transparent; color:@text; text-align:left;
-    border:1px solid transparent; border-radius:5px; padding:3px 6px; }
-QPushButton#signalName:hover, QPushButton#signalName:focus { background:@alternate; }
-QFrame#signalCell { border:1px solid transparent; border-radius:5px; }
-QFrame#signalCell[oscEnabled="true"] { border-color:@focus; }
 QToolButton#signalPin { border:1px solid transparent; border-radius:4px; }
 QToolButton#signalPin:hover, QToolButton#signalPin:checked { background:@alternate; }
 QToolButton#signalPin:focus { border-color:@focus; }

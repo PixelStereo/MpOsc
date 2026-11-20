@@ -3,6 +3,7 @@
 #include "Destinations.h"
 #include "MediaPipeRuntime.h"
 #include "OscCodec.h"
+#include "SignalFilters.h"
 #include "Signals.h"
 #include "Worker.h"
 
@@ -64,10 +65,29 @@ int runSelfTest()
         || !head.contains("/face/head/pitch") || std::abs(head.value("/face/head/pitch")) > 1e-6
         || !head.contains("/face/head/roll") || std::abs(head.value("/face/head/roll")) > 1e-6)
         return 11;
-    if (invertedSignal("/face/jawOpen", 0.25) != 0.75
-        || invertedSignal("/face/head/yaw", -30.0) != 30.0
-        || invertedSignal("/hands/count", 0.0) != 2.0)
+    // Inversion is a filter of the chain, whatever the type: 1 − x, −x, 2 − x
+    const auto inverted = [](const QString &address, double value) {
+        SignalFilter filter;
+        filter.setChain(invertChain(address));
+        return filter.step(value, .033);
+    };
+    if (std::abs(inverted("/face/jawOpen", 0.25) - 0.75) > 1e-9 || inverted("/face/head/yaw", -30.0) != 30.0
+        || inverted("/hands/count", 0.0) != 2.0 || inverted("/hands/left/gesture/victory", 1) != 0)
         return 12;
+    {
+        // A switch held for a time (Hold), out as on / off; the chain is saved as text and read back
+        auto hold = InteractionStage::made(InteractionFilter::Hold);
+        hold.a = 0.2;
+        SignalFilter filter;
+        filter.setChain(chainFromText(chainToText({hold})));
+        if (filter.chain().size() != 1 || filter.chain()[0].kind != InteractionFilter::Hold) return 15;
+        filter.step(1, .033);
+        const auto still = signalValue(SignalType::Bool, filter.step(0, .033));
+        for (int i = 0; i < 8; ++i) filter.step(0, .033);
+        const auto gone = signalValue(SignalType::Bool, filter.step(0, .033));
+        if (still.typeId() != QMetaType::Bool || !still.toBool() || gone.toBool()) return 15;
+        if (signalValue(SignalType::Int, 1.6).toInt() != 2 || signalValue(SignalType::Float, .25).typeId() != QMetaType::Double) return 15;
+    }
     // Switches are switches, a count is an integer, the rest are measures
     if (signalType("/hands/left/gesture/thumb_up") != SignalType::Bool || signalType("/hands/right/present") != SignalType::Bool
         || signalType("/face/present") != SignalType::Bool || signalType("/body/present") != SignalType::Bool

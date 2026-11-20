@@ -13,8 +13,8 @@ add_subdirectory(third_party/pxs EXCLUDE_FROM_ALL)
 qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
     src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
     src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
-    src/engine/MediaPipeRuntime.cpp src/engine/Signals.cpp src/engine/VideoInput.cpp src/engine/VideoInput.h
-    src/ui/About.cpp src/ui/About.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
+    src/engine/MediaPipeRuntime.cpp src/engine/SignalFilters.cpp src/engine/SignalFilters.h src/engine/Signals.cpp src/engine/VideoInput.cpp src/engine/VideoInput.h
+    src/ui/About.cpp src/ui/About.h src/ui/FilterEditor.cpp src/ui/FilterEditor.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
     src/ui/Theme.cpp src/ui/TrackingOverlay.cpp
     src/ui/VideoPreview.h)
 # Sources include each other by file name: engine (no widgets), ui (widgets), app (entry point and self-test)
@@ -33,7 +33,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" WORKER)
 configure_file(src/engine/Worker.h.in generated/Worker.h @ONLY)
 target_include_directories(MpOsc PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets pxs::tree pxs::bind pxs::oscquery)
+target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets pxs::tree pxs::bind pxs::oscquery pxs::interaction)
 set_target_properties(MpOsc PROPERTIES OUTPUT_NAME "${MPOSC_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER com.pixelstereo.mp-osc
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in")

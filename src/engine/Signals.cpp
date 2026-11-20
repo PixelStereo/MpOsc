@@ -97,9 +97,9 @@ QString signalTypeTag(SignalType type)
     return type == SignalType::Bool ? QStringLiteral("T") : type == SignalType::Int ? QStringLiteral("i") : QStringLiteral("f");
 }
 
-double invertedSignal(const QString &address, double value)
+QString signalFamily(const QString &address)
 {
-    if (address.startsWith("/face/head/") || address.endsWith("/z")) return -value;
-    if (address == "/hands/count") return 2.0 - value;
-    return 1.0 - value;
+    for (const auto *family : {"/face", "/hands/left", "/hands/right", "/body"})
+        if (address.startsWith(QString::fromLatin1(family) + '/')) return QString::fromLatin1(family);
+    return QStringLiteral("/hands");
 }

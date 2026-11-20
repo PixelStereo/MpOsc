@@ -14,6 +14,12 @@ On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows 
 
 Choose a video source, enter your OSC destinations, click the signals you want, then turn on **Send OSC**. Save your setup as a `.mposc` file to recall your settings later.
 
+## Filter any signal
+
+Every signal, whatever its type (a switch, a count, a measure), goes through its own chain of filters before it is sent and shown. Select a signal in the table and use **Add filter** at the right: invert, average, attack / release, delay, hold, debounce, auto return, envelope… Only the filters that mean something for the signal are offered; the ones over time suit them all. Drag a filter to change the order, fold it to hide its settings. Right-click a family (`/face/*`, `/hands/left/*`, `/hands/right/*`, `/body/*`) to give a filter, or the chain of the selected signal, to all of its signals. A badge `≋ 2` marks the signals that have filters. The filters are those of [pxs](https://github.com/PixelStereo/pxs) and are saved in the `.mposc` file.
+
+The filtered value is what goes out: `T` / `F` for a switch, `i` for a count, `f` for a measure, and what an OSCQuery client sees.
+
 ## Drive it from anywhere
 
 MpOsc is an OSCQuery device like every other Pixel Stereo application: it announces itself on the network, and any OSCQuery client (Ossia Score, Chataigne, Kadran, your own script) finds it, reads its tree and drives it. Ports **47821** (OSC) and **47822** (OSCQuery), or the next free ones.

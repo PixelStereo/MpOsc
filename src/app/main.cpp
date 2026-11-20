@@ -434,7 +434,7 @@ public:
         signalPanel->setSignalKnown([this](const QString &address) {
             if (!tree.find(address)) tree.addSignal(address, signalTypeTag(signalType(address)), "A tracking signal MpOsc sends to its destinations");
         });
-        signalPanel->setSignalFired([this](const QString &address, double value) { tree.fire(address, {QVariant(value)}); });
+        signalPanel->setSignalFired([this](const QString &address, const QVariant &value) { tree.fire(address, {value}); });
         signalPanel->restoreRows(settings);
         exposeControls(settings);
         timer.start(33);
@@ -670,17 +670,6 @@ private:
         rememberConfiguration(path);
         status->setText("Configuration loaded");
     }
-
-    struct Row {
-        QTreeWidgetItem *item;
-        QProgressBar *meter;
-        QLabel *raw;
-        QCheckBox *invert;
-        QPushButton *signal;
-        SliderField *attack, *release;
-        double filtered = 0;
-        bool initialized = false, sent = false;
-    };
 
     void receiveFrame(QImage frame)
     {
