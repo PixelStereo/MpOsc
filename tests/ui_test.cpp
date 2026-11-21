@@ -1,4 +1,4 @@
-#include "FilterEditor.h"
+#include <pxs/FilterEditor.h>
 #include "HoverHints.h"
 #include "SignalFilters.h"
 #include "SignalPanel.h"
@@ -75,7 +75,7 @@ private slots:
         FilterChain three = slowChain();
         three.push_back(InteractionStage::made(InteractionFilter::Threshold));
         panel.setChainOf("/face/jawOpen", three);
-        auto *editor = panel.findChild<FilterEditor *>();
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
         auto *list = editor->findChild<QListWidget *>();
         QVERIFY(list && list->count() == 3);
         QTest::qWait(50);
@@ -89,7 +89,7 @@ private slots:
         // What a drag of the first card carries, dropped below the last (a real drag needs a real mouse: the drag of the platform
         // under test does not start from synthetic events, so the events of the drag are sent to the list as it would get them)
         auto *mime = new QMimeData;
-        mime->setData("application/x-mposc-filter", "0");
+        mime->setData("application/x-pxs-filter", "0");
         const QPoint at = list->visualItemRect(list->item(2)).bottomLeft() + QPoint(40, 6);
         QDragEnterEvent enter(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(list->viewport(), &enter);
@@ -106,7 +106,7 @@ private slots:
         QCOMPARE(after.first(), before[1]);
         // And the last one back to the top (dropped above the first card); the cards are rebuilt in their new order, with their bars
         auto *up = new QMimeData;
-        up->setData("application/x-mposc-filter", "2");
+        up->setData("application/x-pxs-filter", "2");
         const QPoint top = list->visualItemRect(list->item(0)).topLeft() + QPoint(40, 2);
         QDragEnterEvent enter2(top, Qt::MoveAction, up, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(list->viewport(), &enter2);
@@ -137,7 +137,7 @@ private slots:
         panel.update(frame(0.0), "127.0.0.1:9", false);
         panel.setFiltersShown(true);
         panel.selectSignal("/face/jawOpen");
-        auto *editor = panel.findChild<FilterEditor *>();
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
         QVERIFY(editor);
         // The signal alone: its bar, and no filter yet
         auto bars = [&] {

@@ -15,9 +15,11 @@
 #include <functional>
 
 class FamilyItem;
-class FilterEditor;
 class QCheckBox;
+namespace pxs::filterview {
+class FilterEditor;
 class SignalMeter;
+}
 
 // The signal tables (pinned, then the others by family), a chain of filters per signal edited at the right of them, and
 // the OSC output of what the chains give.
@@ -53,7 +55,7 @@ public:
 private:
     struct Row {
         QTreeWidgetItem *item = nullptr;
-        SignalMeter *meter = nullptr;
+        pxs::filterview::SignalMeter *meter = nullptr;
         QCheckBox *send = nullptr;
         SignalFilter filter;
         bool pinned = false, initialized = false, sent = false;
@@ -75,7 +77,7 @@ private:
 
     QLineEdit *search;
     QTreeWidget *table, *pinnedTable;
-    FilterEditor *editor;
+    pxs::filterview::FilterEditor *editor;
     QMap<QString, Row> rows;
     QMap<QString, FamilyItem *> families;
     QString query, selected;

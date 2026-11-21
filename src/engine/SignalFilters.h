@@ -3,6 +3,7 @@
 #include "Signals.h"
 
 #include <Interactions.h>
+#include <pxs/FilterEditor.h>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -12,16 +13,12 @@
 
 // A signal's chain of filters: the interaction filters of pxs (Attack Release, Average, Hold, Math…), one after the other,
 // whatever the type of the signal is. A switch goes in as 0 or 1 and comes out on from 0.5, a count comes out rounded.
-using FilterChain = std::vector<InteractionStage>;
+using FilterChain = pxs::filterview::FilterChain;
 
 // The filters that mean something for this signal (the filters over time suit every type; the others, the type they suit)
 std::vector<InteractionFilter> filtersOffered(const QString &address);
-// The mini documentation of a filter, to choose one: its group (Smooth, Time, Trigger, Shape), what it does in a line, and when to use it
-struct FilterInfo {
-    QString group, summary, detail;
-};
-FilterInfo filterInfo(InteractionFilter kind);
-QStringList filterGroups(); // in the order the menus list them
+// What the filter editor needs to know about a signal: its range, how a value is sent and read, the filters that suit it, and its Invert
+pxs::filterview::Signal filterSignal(const QString &address);
 
 // What "Invert" is for this signal: 1 − x for a switch or a measure of 0 to 1, −x for an angle or a depth, 2 − x for the hands count
 FilterChain invertChain(const QString &address);
