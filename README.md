@@ -12,7 +12,9 @@
 
 On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows x64**, run the installer and launch MpOsc from the Start menu.
 
-Choose a video source, enter your OSC destinations, click the signals you want, then turn on **Send OSC**. Save your setup as a `.mposc` file to recall your settings later.
+Choose a video source, enter your OSC destinations, click the signals you want, then turn on **Send OSC**. Select a signal and press **Cmd+M** (**Ctrl+M** on Windows) to shape it with a chain of filters: each filter has its own bar under it, and the signal as it comes in sits above them, so you see what every step does. In the table, the bar is the signal and the amber line under it is what gets sent. Hover anything to read what it does, at the bottom right.
+
+Save your setup as a `.mposc` file to recall your settings later.
 
 ## Filter any signal
 

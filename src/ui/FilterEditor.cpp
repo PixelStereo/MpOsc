@@ -1,5 +1,7 @@
 #include "FilterEditor.h"
 
+#include "HoverHints.h"
+#include "SignalMeter.h"
 #include "SliderField.h"
 
 #include <QCheckBox>
@@ -8,6 +10,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QTimer>
 #include <QToolButton>
@@ -16,7 +19,7 @@
 
 void addFilterActions(QMenu *menu, const std::vector<InteractionFilter> &kinds, const std::function<void(InteractionFilter)> &chosen)
 {
-    menu->setToolTipsVisible(true);
+    HoverHints::watch(menu); // what a filter is, in the status bar as the pointer goes over it
     for (const auto &group : filterGroups()) {
         QMenu *sub = nullptr;
         for (auto kind : kinds) {
@@ -24,10 +27,10 @@ void addFilterActions(QMenu *menu, const std::vector<InteractionFilter> &kinds, 
             if (info.group != group) continue;
             if (!sub) {
                 sub = menu->addMenu(group);
-                sub->setToolTipsVisible(true);
+                HoverHints::watch(sub);
             }
-            auto *action = sub->addAction(QStringLiteral("%1  ·  %2").arg(interactionFilterName(kind), info.summary));
-            action->setToolTip(info.detail);
+            auto *action = sub->addAction(interactionFilterName(kind));
+            action->setToolTip(QStringLiteral("%1. %2").arg(info.summary, info.detail));
             QObject::connect(action, &QAction::triggered, menu, [chosen, kind] { chosen(kind); });
         }
     }
@@ -44,38 +47,46 @@ QString typeText(SignalType type)
     return {};
 }
 
-// What a card is made of: a fold button, its on / off box, its name, a remove button, then its settings
+// A bar like the signal table's: the same range and the same text for the same signal
+SignalMeter *makeMeter(const QString &address)
+{
+    auto *meter = new SignalMeter;
+    const auto type = signalType(address);
+    if (isAngle(address)) {
+        const int limit = address.endsWith("/pitch") ? 90 : 180;
+        meter->setRange(-limit, limit);
+    } else {
+        meter->setRange(0, type == SignalType::Int ? 2 : 1000);
+    }
+    meter->setObjectName("signalValue");
+    meter->setFixedHeight(16);
+    meter->setFormat(QStringLiteral("—"));
+    meter->setValue(meter->minimum());
+    return meter;
+}
+
+// What a card is made of: a fold button, its on / off box, its name, a remove button, the signal after it, then its settings
 class FilterCard : public QWidget {
 public:
     QToolButton *fold, *remove;
     QCheckBox *enabled;
     QLabel *name;
+    SignalMeter *meter;
     QWidget *body;
-    QLabel *summary;
     bool unfolded;
 
-    // The height it takes in `width` pixels: the description wraps, so it is as tall as the width makes it
-    int heightFor(int width)
+    // The height it takes: added up by hand, the layouts of a card that is not shown yet answer too small
+    int height()
     {
-        const int text = std::max(60, width - 12 - 24);
-        summary->setFixedHeight(summary->fontMetrics().boundingRect(0, 0, text, 100000, Qt::TextWordWrap, summary->text()).height() + 2);
-        // Added up by hand: the layouts of a card that is not shown yet answer too small
         auto *outer = static_cast<QVBoxLayout *>(layout());
         auto *inner = static_cast<QVBoxLayout *>(body->layout());
-        int height = outer->contentsMargins().top() + outer->contentsMargins().bottom() + outer->itemAt(0)->sizeHint().height();
-        if (unfolded) {
-            int rows = 0;
-            for (int i = 0; i < inner->count(); ++i) {
-                auto *item = inner->itemAt(i);
-                height += item->widget() == summary ? summary->height() : 26; // a setting: a name and a field
-                ++rows;
-            }
-            height += outer->spacing() + std::max(0, rows - 1) * inner->spacing();
-        }
-        return height;
+        int total = outer->contentsMargins().top() + outer->contentsMargins().bottom() + outer->itemAt(0)->sizeHint().height() +
+                    outer->spacing() + meter->height();
+        if (unfolded && inner->count() > 0) total += outer->spacing() + int(inner->count()) * 26 + (int(inner->count()) - 1) * inner->spacing();
+        return total;
     }
 
-    FilterCard(const InteractionStage &stage, bool open) : unfolded(open)
+    FilterCard(const QString &address, const InteractionStage &stage, bool open) : unfolded(open)
     {
         auto *column = new QVBoxLayout(this);
         column->setContentsMargins(6, 4, 6, 4);
@@ -101,18 +112,18 @@ public:
         header->addWidget(name, 1);
         header->addWidget(remove);
         column->addLayout(header);
+        meter = makeMeter(address);
+        meter->setToolTip(QStringLiteral("The signal after %1").arg(stage.displayName()));
+        column->addWidget(meter);
         body = new QWidget;
         new QVBoxLayout(body);
         body->layout()->setContentsMargins(24, 0, 0, 0);
         body->layout()->setSpacing(4);
-        const auto info = filterInfo(stage.kind);
-        summary = new QLabel(info.detail);
-        summary->setWordWrap(true);
-        summary->setEnabled(false); // muted
-        body->layout()->addWidget(summary);
-        name->setToolTip(info.detail);
-        body->setVisible(unfolded);
         column->addWidget(body);
+        body->setVisible(unfolded);
+        // What the filter does is said in the status bar, as the pointer goes over its card
+        const auto info = filterInfo(stage.kind);
+        setToolTip(QStringLiteral("%1. %2").arg(info.summary, info.detail));
     }
 };
 }
@@ -126,11 +137,7 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
     bold.setBold(true);
     title->setFont(bold);
     title->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    type = new QLabel;
-    live = new QLabel;
     column->addWidget(title);
-    column->addWidget(type);
-    column->addWidget(live);
     auto *tools = new QHBoxLayout;
     add = new QPushButton("Add filter");
     clear = new QToolButton;
@@ -140,6 +147,11 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
     tools->addWidget(clear);
     tools->addStretch();
     column->addLayout(tools);
+    input = new QProgressBar;
+    input->setObjectName("signalValue");
+    input->setFixedHeight(16);
+    input->setToolTip("The signal as it comes in, before the filters");
+    column->addWidget(input);
     list = new QListWidget;
     list->setDragDropMode(QAbstractItemView::InternalMove);
     list->setDefaultDropAction(Qt::MoveAction);
@@ -148,10 +160,6 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     list->setSpacing(3);
     column->addWidget(list, 1);
-    empty = new QLabel;
-    empty->setWordWrap(true);
-    empty->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    column->addWidget(empty, 1);
     connect(clear, &QToolButton::clicked, this, [this] {
         chain.clear();
         open.clear();
@@ -184,19 +192,22 @@ void FilterEditor::setSignal(const QString &address, const FilterChain &filters)
     chain = filters;
     open.assign(chain.size(), false);
     const bool has = !address.isEmpty();
+    kind = has ? signalType(address) : SignalType::Float;
+    angle = has && isAngle(address);
     title->setText(has ? address : QString());
-    type->setText(has ? typeText(signalType(address)) : QString());
-    live->clear();
+    title->setToolTip(has ? typeText(kind) : QString());
     add->setEnabled(has);
     clear->setEnabled(has);
     list->setVisible(has);
-    empty->setVisible(!has);
-    empty->setText("Select a signal to filter it: its value goes through the filters you add, one after the other, "
-                   "before it is sent and shown.\n\nRight-click a family (face, left hand, right hand, body) to give "
-                   "a filter to all of its signals.");
+    input->setVisible(has);
     if (has) {
+        if (angle) input->setRange(address.endsWith("/pitch") ? -90 : -180, address.endsWith("/pitch") ? 90 : 180);
+        else input->setRange(0, kind == SignalType::Int ? 2 : 1000);
+        input->setFormat(QStringLiteral("—"));
+        input->setValue(input->minimum());
         auto *menu = new QMenu(add);
-        auto *invert = menu->addAction("Invert  ·  flips it (1 − x, on ↔ off, −x for an angle)", this, [this] {
+        HoverHints::watch(menu);
+        auto *invert = menu->addAction("Invert", this, [this] {
             for (auto &stage : invertChain(signalAddress)) {
                 chain.push_back(stage);
                 open.push_back(false);
@@ -204,19 +215,32 @@ void FilterEditor::setSignal(const QString &address, const FilterChain &filters)
             rebuild();
             edited(true);
         });
-        invert->setToolTip("Turns the signal upside down: on becomes off, high becomes low.");
-        menu->setToolTipsVisible(true);
+        invert->setToolTip("Flips the signal (1 − x, on ↔ off, −x for an angle)");
         menu->addSeparator();
-        addFilterActions(menu, filtersOffered(address), [this](InteractionFilter kind) { addFilter(kind); });
+        addFilterActions(menu, filtersOffered(address), [this](InteractionFilter filter) { addFilter(filter); });
         delete add->menu();
         add->setMenu(menu);
     }
     rebuild();
 }
 
-void FilterEditor::setLive(const QString &input, const QString &output)
+void FilterEditor::setTrace(bool available, double value, const std::vector<double> &afterEach)
 {
-    live->setText(signalAddress.isEmpty() ? QString() : QStringLiteral("%1  →  %2").arg(input, output));
+    const auto show = [&](QProgressBar *bar, double v) {
+        if (!available) {
+            bar->setFormat(QStringLiteral("—"));
+            bar->setValue(bar->minimum());
+            return;
+        }
+        bar->setFormat(signalText(kind, angle, signalValue(kind, v).toDouble()));
+        bar->setValue(signalLevel(kind, angle, bar->minimum(), bar->maximum(), v));
+    };
+    show(input, value);
+    for (size_t k = 0; k < meters.size(); ++k) {
+        show(meters[k], k < afterEach.size() ? afterEach[k] : value);
+        // The signal as it came in, marked on each bar: how far each filter has taken it
+        meters[k]->setReference(available, signalLevel(kind, angle, meters[k]->minimum(), meters[k]->maximum(), value));
+    }
 }
 
 void FilterEditor::addFilter(InteractionFilter kind)
@@ -239,7 +263,7 @@ void FilterEditor::fitItems()
         auto *card = dynamic_cast<FilterCard *>(list->itemWidget(item));
         if (!card) continue;
         const int width = std::max(120, list->viewport()->width() - 2 * list->spacing());
-        item->setSizeHint(QSize(width, card->heightFor(width)));
+        item->setSizeHint(QSize(width, card->height()));
     }
 }
 
@@ -252,6 +276,7 @@ void FilterEditor::resizeEvent(QResizeEvent *event)
 void FilterEditor::rebuild()
 {
     rebuilding = true;
+    meters.clear();
     list->clear();
     for (size_t i = 0; i < chain.size(); ++i) addCard(int(i));
     fitItems();
@@ -262,7 +287,8 @@ void FilterEditor::addCard(int index)
 {
     auto *item = new QListWidgetItem(list);
     item->setData(Qt::UserRole, index);
-    auto *card = new FilterCard(chain[size_t(index)], open[size_t(index)]);
+    auto *card = new FilterCard(signalAddress, chain[size_t(index)], open[size_t(index)]);
+    meters.push_back(card->meter);
     card->setObjectName("filterCard");
     card->setAttribute(Qt::WA_StyledBackground);
     card->setStyleSheet("QWidget#filterCard { border:1px solid palette(mid); border-radius:5px; }");
