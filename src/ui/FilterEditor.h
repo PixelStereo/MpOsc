@@ -50,7 +50,7 @@ private:
     std::vector<bool> open; // which cards are unfolded, in the order of the chain
     QLabel *title;
     QProgressBar *input;
-    std::vector<SignalMeter *> meters; // under each filter, in the order of the chain
+    SignalMeter *output; // after the last filter: what is sent, with the incoming signal marked on it
     bool angle = false;
     SignalType kind = SignalType::Float;
     QPushButton *add;

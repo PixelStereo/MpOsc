@@ -140,16 +140,21 @@ private slots:
         auto *editor = panel.findChild<FilterEditor *>();
         QVERIFY(editor);
         // The signal alone: its bar, and no filter yet
-        auto bars = [&] { return editor->findChildren<QProgressBar *>("signalValue"); };
+        auto bars = [&] {
+            QList<QProgressBar *> shown;
+            for (auto *bar : editor->findChildren<QProgressBar *>("signalValue"))
+                if (bar->isVisibleTo(editor)) shown << bar;
+            return shown;
+        };
         QCOMPARE(bars().size(), 1);
         panel.setChainOf("/face/jawOpen", slowChain());
-        QCOMPARE(bars().size(), 1 + 2); // the signal as it comes in, then the signal after each filter
+        QCOMPARE(bars().size(), 2); // the signal as it comes in, then the signal after the filters
         for (int i = 0; i < 40; ++i) {
             panel.update(frame(i < 5 ? 0.0 : 1.0), "127.0.0.1:9", false);
             QTest::qWait(8);
         }
         const auto all = bars();
-        // The top one is the signal itself; the others, what each filter makes of it: the slow smoothing is behind, the signal is not
+        // The top one is the signal itself; the one after the filters is what they make of it: the slow smoothing is behind, the signal is not
         QCOMPARE(all.first()->format(), QString("1.000"));
         QVERIFY(all[1]->value() < all.first()->value());
         QVERIFY(all[1]->format() != all.first()->format());

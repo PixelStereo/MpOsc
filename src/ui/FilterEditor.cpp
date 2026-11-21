@@ -143,13 +143,12 @@ SignalMeter *makeMeter(const QString &address)
     return meter;
 }
 
-// What a card is made of: a fold button, its on / off box, its name, a remove button, the signal after it, then its settings
+// What a card is made of: a fold button, its on / off box, its name, a remove button, then its settings
 class FilterCard : public QWidget {
 public:
     QToolButton *fold, *remove;
     QCheckBox *enabled;
     QLabel *name;
-    SignalMeter *meter;
     QWidget *body;
     bool unfolded;
 
@@ -158,15 +157,14 @@ public:
     {
         auto *outer = static_cast<QVBoxLayout *>(layout());
         auto *inner = static_cast<QVBoxLayout *>(body->layout());
-        int total = outer->contentsMargins().top() + outer->contentsMargins().bottom() + outer->itemAt(0)->sizeHint().height() +
-                    outer->spacing() + meter->height();
+        int total = outer->contentsMargins().top() + outer->contentsMargins().bottom() + outer->itemAt(0)->sizeHint().height();
         if (unfolded && inner->count() > 0) total += outer->spacing() + int(inner->count()) * 26 + (int(inner->count()) - 1) * inner->spacing();
         return total;
     }
 
     int index; // its place in the chain: what a drag carries
 
-    FilterCard(const QString &address, const InteractionStage &stage, bool open, int place) : unfolded(open), index(place)
+    FilterCard(const InteractionStage &stage, bool open, int place) : unfolded(open), index(place)
     {
         auto *column = new QVBoxLayout(this);
         column->setContentsMargins(6, 4, 6, 4);
@@ -198,10 +196,6 @@ public:
         header->addWidget(name, 1);
         header->addWidget(remove);
         column->addLayout(header);
-        meter = makeMeter(address);
-        meter->setAttribute(Qt::WA_TransparentForMouseEvents); // a drag may start on it
-        meter->setToolTip(QStringLiteral("The signal after %1").arg(stage.displayName()));
-        column->addWidget(meter);
         body = new QWidget;
         new QVBoxLayout(body);
         body->layout()->setContentsMargins(24, 0, 0, 0);
@@ -282,6 +276,9 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     list->setSpacing(3);
     column->addWidget(list, 1);
+    output = makeMeter(QString());
+    output->setToolTip("The signal after the filters: what is sent");
+    column->addWidget(output);
     connect(clear, &QToolButton::clicked, this, [this] {
         chain.clear();
         open.clear();
@@ -325,6 +322,9 @@ void FilterEditor::setSignal(const QString &address, const FilterChain &filters)
         else input->setRange(0, kind == SignalType::Int ? 2 : 1000);
         input->setFormat(QStringLiteral("—"));
         input->setValue(input->minimum());
+        output->setRange(input->minimum(), input->maximum());
+        output->setFormat(QStringLiteral("—"));
+        output->setValue(output->minimum());
         auto *menu = new QMenu(add);
         HoverHints::watch(menu);
         auto *invert = menu->addAction("Invert", this, [this] {
@@ -356,11 +356,9 @@ void FilterEditor::setTrace(bool available, double value, const std::vector<doub
         bar->setValue(signalLevel(kind, angle, bar->minimum(), bar->maximum(), v));
     };
     show(input, value);
-    for (size_t k = 0; k < meters.size(); ++k) {
-        show(meters[k], k < afterEach.size() ? afterEach[k] : value);
-        // The signal as it came in, marked on each bar: how far each filter has taken it
-        meters[k]->setReference(available, signalLevel(kind, angle, meters[k]->minimum(), meters[k]->maximum(), value));
-    }
+    show(output, afterEach.empty() ? value : afterEach.back());
+    // The signal as it came in, marked on the bar after the filters: how far they have taken it
+    output->setReference(available, signalLevel(kind, angle, output->minimum(), output->maximum(), value));
 }
 
 void FilterEditor::addFilter(InteractionFilter kind)
@@ -396,10 +394,10 @@ void FilterEditor::resizeEvent(QResizeEvent *event)
 void FilterEditor::rebuild()
 {
     rebuilding = true;
-    meters.clear();
     list->clear();
     for (size_t i = 0; i < chain.size(); ++i) addCard(int(i));
     fitItems();
+    output->setVisible(!signalAddress.isEmpty() && !chain.empty());
     rebuilding = false;
 }
 
@@ -407,8 +405,7 @@ void FilterEditor::addCard(int index)
 {
     auto *item = new QListWidgetItem(list);
     item->setData(Qt::UserRole, index);
-    auto *card = new FilterCard(signalAddress, chain[size_t(index)], open[size_t(index)], index);
-    meters.push_back(card->meter);
+    auto *card = new FilterCard(chain[size_t(index)], open[size_t(index)], index);
     card->setObjectName("filterCard");
     card->setAttribute(Qt::WA_StyledBackground);
     card->setStyleSheet("QWidget#filterCard { border:1px solid palette(mid); border-radius:5px; }");
