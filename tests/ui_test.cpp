@@ -115,7 +115,7 @@ private slots:
         QTest::qWait(300);
         QCOMPARE(order(), before);
         QCOMPARE(list->count(), 3);
-        QCOMPARE(editor->findChildren<QProgressBar *>("signalValue").size(), 1 + 3);
+        QCOMPARE(editor->findChildren<QProgressBar *>("signalValue").size(), 2); // the signal in, the signal out
     }
 
     void filtersAreHiddenUntilAsked()
