@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 # Shared Pixel Stereo code (the OSC codec), pinned as a submodule
 set(PXS_BUILD_TESTS OFF)
-add_subdirectory(third_party/pxs EXCLUDE_FROM_ALL)
+add_subdirectory(third_party/pxs-qt EXCLUDE_FROM_ALL)
 qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
     src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
     src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
