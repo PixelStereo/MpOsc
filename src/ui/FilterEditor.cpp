@@ -4,7 +4,16 @@
 #include "SignalMeter.h"
 #include "SliderField.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QScrollBar>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -47,6 +56,75 @@ QString typeText(SignalType type)
     return {};
 }
 
+// The list of cards. A card dragged by its handle (or its name) is dropped between two others, where a line shows it: the list
+// does not move the cards itself, it tells where the dragged one was dropped and the chain is rebuilt in its new order.
+constexpr const char *kFilterMime = "application/x-mposc-filter";
+
+class FilterList : public QListWidget {
+public:
+    std::function<void(int from, int insertBefore)> moved;
+
+    FilterList()
+    {
+        setAcceptDrops(true);
+        viewport()->setAcceptDrops(true);
+        setDragEnabled(false);
+        setDropIndicatorShown(false); // the line is drawn here
+    }
+
+protected:
+    void dragEnterEvent(QDragEnterEvent *event) override { accept(event); }
+    void dragMoveEvent(QDragMoveEvent *event) override
+    {
+        if (!event->mimeData()->hasFormat(kFilterMime)) return;
+        const int y = int(event->position().y());
+        if (y < 24) verticalScrollBar()->setValue(verticalScrollBar()->value() - 12); // the list follows the drag at its edges
+        else if (y > viewport()->height() - 24) verticalScrollBar()->setValue(verticalScrollBar()->value() + 12);
+        dropRow = insertionRow(y);
+        viewport()->update();
+        event->acceptProposedAction();
+    }
+    void dragLeaveEvent(QDragLeaveEvent *) override
+    {
+        dropRow = -1;
+        viewport()->update();
+    }
+    void dropEvent(QDropEvent *event) override
+    {
+        if (!event->mimeData()->hasFormat(kFilterMime)) return;
+        const int from = event->mimeData()->data(kFilterMime).toInt();
+        const int before = insertionRow(int(event->position().y()));
+        dropRow = -1;
+        viewport()->update();
+        event->acceptProposedAction();
+        if (moved) moved(from, before);
+    }
+    void paintEvent(QPaintEvent *event) override
+    {
+        QListWidget::paintEvent(event);
+        if (dropRow < 0) return;
+        const int y = dropRow >= count() ? (count() ? visualItemRect(item(count() - 1)).bottom() + 2 : 0) : visualItemRect(item(dropRow)).top() - 2;
+        QPainter painter(viewport());
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0xe0, 0xb2, 0x5c));
+        painter.drawRoundedRect(QRect(2, y - 1, viewport()->width() - 4, 3), 1.5, 1.5);
+    }
+
+private:
+    void accept(QDragEnterEvent *event)
+    {
+        if (event->mimeData()->hasFormat(kFilterMime)) event->acceptProposedAction();
+    }
+    // Between which cards the pointer is: the number of the card it would go before (the count: at the end)
+    int insertionRow(int y) const
+    {
+        for (int row = 0; row < count(); ++row)
+            if (y < visualItemRect(item(row)).center().y()) return row;
+        return count();
+    }
+    int dropRow = -1;
+};
+
 // A bar like the signal table's: the same range and the same text for the same signal
 SignalMeter *makeMeter(const QString &address)
 {
@@ -86,12 +164,19 @@ public:
         return total;
     }
 
-    FilterCard(const QString &address, const InteractionStage &stage, bool open) : unfolded(open)
+    int index; // its place in the chain: what a drag carries
+
+    FilterCard(const QString &address, const InteractionStage &stage, bool open, int place) : unfolded(open), index(place)
     {
         auto *column = new QVBoxLayout(this);
         column->setContentsMargins(6, 4, 6, 4);
         column->setSpacing(4);
         auto *header = new QHBoxLayout;
+        auto *grip = new QLabel(QStringLiteral("⋮⋮"));
+        grip->setCursor(Qt::OpenHandCursor);
+        grip->setToolTip("Drag to put this filter in another place");
+        grip->setAttribute(Qt::WA_TransparentForMouseEvents); // the card takes the drag
+        setCursor(Qt::ArrowCursor);
         fold = new QToolButton;
         fold->setAutoRaise(true);
         fold->setArrowType(unfolded ? Qt::DownArrow : Qt::RightArrow);
@@ -107,12 +192,14 @@ public:
         remove->setAutoRaise(true);
         remove->setToolTip("Remove this filter");
         remove->setAccessibleName("Remove filter");
+        header->addWidget(grip);
         header->addWidget(fold);
         header->addWidget(enabled);
         header->addWidget(name, 1);
         header->addWidget(remove);
         column->addLayout(header);
         meter = makeMeter(address);
+        meter->setAttribute(Qt::WA_TransparentForMouseEvents); // a drag may start on it
         meter->setToolTip(QStringLiteral("The signal after %1").arg(stage.displayName()));
         column->addWidget(meter);
         body = new QWidget;
@@ -125,6 +212,42 @@ public:
         const auto info = filterInfo(stage.kind);
         setToolTip(QStringLiteral("%1. %2").arg(info.summary, info.detail));
     }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton) pressed = event->position().toPoint();
+        else pressed = QPoint(-1, -1);
+        QWidget::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!(event->buttons() & Qt::LeftButton) || pressed.x() < 0 ||
+            (event->position().toPoint() - pressed).manhattanLength() < QApplication::startDragDistance()) {
+            QWidget::mouseMoveEvent(event);
+            return;
+        }
+        // The card follows the pointer as a picture; where it would be dropped is shown by a line in the list
+        auto *mime = new QMimeData;
+        mime->setData(kFilterMime, QByteArray::number(index));
+        auto *drag = new QDrag(this);
+        drag->setMimeData(mime);
+        QPixmap picture = grab();
+        QPixmap faded(picture.size());
+        faded.setDevicePixelRatio(picture.devicePixelRatio());
+        faded.fill(Qt::transparent);
+        QPainter painter(&faded);
+        painter.setOpacity(0.7);
+        painter.drawPixmap(0, 0, picture);
+        painter.end();
+        drag->setPixmap(faded);
+        drag->setHotSpot(pressed);
+        pressed = QPoint(-1, -1);
+        drag->exec(Qt::MoveAction);
+    }
+
+private:
+    QPoint pressed{-1, -1};
 };
 }
 
@@ -152,9 +275,8 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
     input->setFixedHeight(16);
     input->setToolTip("The signal as it comes in, before the filters");
     column->addWidget(input);
-    list = new QListWidget;
-    list->setDragDropMode(QAbstractItemView::InternalMove);
-    list->setDefaultDropAction(Qt::MoveAction);
+    auto *cards = new FilterList;
+    list = cards;
     list->setSelectionMode(QAbstractItemView::NoSelection);
     list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -166,23 +288,21 @@ FilterEditor::FilterEditor(QWidget *parent) : QWidget(parent)
         rebuild();
         edited(true);
     });
-    // A card dropped elsewhere: the chain follows the new order of the list (rebuilt once the drop is over)
-    connect(list->model(), &QAbstractItemModel::rowsMoved, this, [this] {
-        if (rebuilding) return;
-        FilterChain moved;
-        std::vector<bool> unfolded;
-        for (int row = 0; row < list->count(); ++row) {
-            const auto index = list->item(row)->data(Qt::UserRole).toInt();
-            moved.push_back(chain[size_t(index)]);
-            unfolded.push_back(open[size_t(index)]);
-        }
-        chain = moved;
-        open = unfolded;
-        QTimer::singleShot(0, this, [this] {
+    // A card dropped between two others: the chain follows (rebuilt once the drag is over: the card dragged is one of the list's)
+    cards->moved = [this](int from, int before) {
+        QTimer::singleShot(0, this, [this, from, before] {
+            const int to = before > from ? before - 1 : before;
+            if (from < 0 || from >= int(chain.size()) || to < 0 || to >= int(chain.size()) || to == from) return;
+            const auto stage = chain[size_t(from)];
+            const bool unfolded = open[size_t(from)];
+            chain.erase(chain.begin() + from);
+            open.erase(open.begin() + from);
+            chain.insert(chain.begin() + to, stage);
+            open.insert(open.begin() + to, unfolded);
             rebuild();
             edited(true);
         });
-    });
+    };
     setSignal({}, {});
 }
 
@@ -287,7 +407,7 @@ void FilterEditor::addCard(int index)
 {
     auto *item = new QListWidgetItem(list);
     item->setData(Qt::UserRole, index);
-    auto *card = new FilterCard(signalAddress, chain[size_t(index)], open[size_t(index)]);
+    auto *card = new FilterCard(signalAddress, chain[size_t(index)], open[size_t(index)], index);
     meters.push_back(card->meter);
     card->setObjectName("filterCard");
     card->setAttribute(Qt::WA_StyledBackground);
