@@ -64,6 +64,28 @@ private slots:
         QVERIFY(filter.afterEach().empty());
     }
 
+    void aCurveAndAnEnvelopeAreDrawnInTheEditor()
+    {
+        const auto offered = filtersOffered("/face/jawOpen");
+        QVERIFY(std::find(offered.begin(), offered.end(), InteractionFilter::Curve) != offered.end());
+        QVERIFY(std::find(offered.begin(), offered.end(), InteractionFilter::Envelope) != offered.end());
+        SignalPanel panel;
+        panel.resize(900, 700);
+        panel.show();
+        panel.update(frame(0.0), "127.0.0.1:9", false); // the signal is there
+        panel.setFiltersShown(true);
+        panel.selectSignal("/face/jawOpen");
+        panel.setChainOf("/face/jawOpen", {InteractionStage::made(InteractionFilter::Curve), InteractionStage::made(InteractionFilter::Envelope)});
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
+        QVERIFY(editor);
+        // The cards are folded: unfold them
+        for (auto *fold : editor->findChildren<QToolButton *>())
+            if (fold->arrowType() == Qt::RightArrow) fold->click();
+        QTest::qWait(50);
+        QVERIFY(editor->findChild<QWidget *>("filterCurve0")); // the drawn curve
+        QVERIFY(editor->findChild<QWidget *>("adsrCurve"));    // the envelope in the hand
+    }
+
     void filtersAreReorderedByDragging()
     {
         SignalPanel panel;

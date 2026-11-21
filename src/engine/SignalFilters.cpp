@@ -21,7 +21,7 @@ std::vector<InteractionFilter> filtersOffered(const QString &address)
     if (type == SignalType::Float) offered.insert(offered.end(), {F::Damper, F::PulseDetection, F::Speed});
     offered.push_back(F::Math);
     // These work in 0 to 1: not for an angle or a count
-    if (type == SignalType::Float && !isAngle(address)) offered.insert(offered.end(), {F::Remap, F::Clamp, F::Steps, F::Threshold, F::Toggle});
+    if (type == SignalType::Float && !isAngle(address)) offered.insert(offered.end(), {F::Remap, F::Clamp, F::Curve, F::Steps, F::Threshold, F::Toggle});
     return offered;
 }
 
