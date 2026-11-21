@@ -7,7 +7,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QCheckBox>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QLabel>
+#include <QMimeData>
+#include <QListWidget>
+#include <QTimer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QToolButton>
@@ -43,6 +49,8 @@ private slots:
         applyInterfacePalette(*qobject_cast<QApplication *>(QCoreApplication::instance()));
     }
 
+    void init() { QSettings().clear(); } // each test starts without the filters the last one saved
+
     void theTraceEndsWhereTheChainEnds()
     {
         SignalFilter filter;
@@ -54,6 +62,60 @@ private slots:
         QVERIFY(std::abs(filter.afterEach().back() - out) < 1e-9); // the last bar is what is sent
         filter.setChain({});
         QVERIFY(filter.afterEach().empty());
+    }
+
+    void filtersAreReorderedByDragging()
+    {
+        SignalPanel panel;
+        panel.resize(900, 700);
+        panel.show();
+        panel.update(frame(0.0), "127.0.0.1:9", false);
+        panel.setFiltersShown(true);
+        panel.selectSignal("/face/jawOpen");
+        FilterChain three = slowChain();
+        three.push_back(InteractionStage::made(InteractionFilter::Threshold));
+        panel.setChainOf("/face/jawOpen", three);
+        auto *editor = panel.findChild<FilterEditor *>();
+        auto *list = editor->findChild<QListWidget *>();
+        QVERIFY(list && list->count() == 3);
+        QTest::qWait(50);
+        const auto order = [&] {
+            QStringList names;
+            for (const auto &stage : panel.chainOf("/face/jawOpen")) names << stage.displayName();
+            return names;
+        };
+        const QStringList before = order();
+        QCOMPARE(before.size(), 3);
+        // What a drag of the first card carries, dropped below the last (a real drag needs a real mouse: the drag of the platform
+        // under test does not start from synthetic events, so the events of the drag are sent to the list as it would get them)
+        auto *mime = new QMimeData;
+        mime->setData("application/x-mposc-filter", "0");
+        const QPoint at = list->visualItemRect(list->item(2)).bottomLeft() + QPoint(40, 6);
+        QDragEnterEvent enter(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(list->viewport(), &enter);
+        QVERIFY(enter.isAccepted());
+        QDragMoveEvent move(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(list->viewport(), &move);
+        QVERIFY(move.isAccepted());
+        QDropEvent drop(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(list->viewport(), &drop);
+        QTest::qWait(300);
+        const QStringList after = order();
+        QCOMPARE(after.size(), 3);
+        QCOMPARE(after.last(), before.first()); // the first filter went to the end
+        QCOMPARE(after.first(), before[1]);
+        // And the last one back to the top (dropped above the first card); the cards are rebuilt in their new order, with their bars
+        auto *up = new QMimeData;
+        up->setData("application/x-mposc-filter", "2");
+        const QPoint top = list->visualItemRect(list->item(0)).topLeft() + QPoint(40, 2);
+        QDragEnterEvent enter2(top, Qt::MoveAction, up, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(list->viewport(), &enter2);
+        QDropEvent drop2(top, Qt::MoveAction, up, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(list->viewport(), &drop2);
+        QTest::qWait(300);
+        QCOMPARE(order(), before);
+        QCOMPARE(list->count(), 3);
+        QCOMPARE(editor->findChildren<QProgressBar *>("signalValue").size(), 1 + 3);
     }
 
     void filtersAreHiddenUntilAsked()
