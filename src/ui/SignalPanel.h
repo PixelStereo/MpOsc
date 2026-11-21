@@ -17,7 +17,7 @@
 class FamilyItem;
 class FilterEditor;
 class QCheckBox;
-class QProgressBar;
+class SignalMeter;
 
 // The signal tables (pinned, then the others by family), a chain of filters per signal edited at the right of them, and
 // the OSC output of what the chains give.
@@ -43,11 +43,17 @@ public:
     void setSignalFired(std::function<void(const QString &address, const QVariant &value)> callback) { signalFired = std::move(callback); }
     // The chain of a signal, as it is now
     FilterChain chainOf(const QString &address) const;
+    // The detail of a signal: its chain of filters, with the signal before and after each filter. Hidden until asked (Ctrl+M)
+    void setFiltersShown(bool shown);
+    bool filtersShown() const;
+    void selectSignal(const QString &address) { select(address); }
+    // Gives a signal a chain of filters (saved), whoever makes it
+    void setChainOf(const QString &address, FilterChain chain);
 
 private:
     struct Row {
         QTreeWidgetItem *item = nullptr;
-        QProgressBar *meter = nullptr;
+        SignalMeter *meter = nullptr;
         QCheckBox *send = nullptr;
         SignalFilter filter;
         bool pinned = false, initialized = false, sent = false;

@@ -4,6 +4,7 @@
 #include "MediaPipeClient.h"
 #include "MediaPipeRuntime.h"
 #include "SelfTest.h"
+#include "HoverHints.h"
 #include "SignalPanel.h"
 #include "Signals.h"
 #include "About.h"
@@ -319,11 +320,23 @@ public:
         split->addWidget(previewPanel);
         signalPanel = new SignalPanel;
         split->addWidget(signalPanel);
+        filtersAction->setChecked(settings.value("window/filters", false).toBool());
+        signalPanel->setFiltersShown(filtersAction->isChecked());
+        connect(filtersAction, &QAction::toggled, this, [this](bool shown) { signalPanel->setFiltersShown(shown); });
         if (!split->restoreState(settings.value("window/split").toByteArray()))
             split->setSizes({520, 600});
         layout->addWidget(split, 1);
         status = new QLabel("Ready");
-        layout->addWidget(status);
+        hint = new QLabel;
+        hint->setObjectName("hint");
+        hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        hint->setForegroundRole(QPalette::PlaceholderText);
+        hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto *statusBar = new QHBoxLayout;
+        statusBar->addWidget(status, 1);
+        statusBar->addWidget(hint, 2); // what the control under the pointer is for
+        layout->addLayout(statusBar);
+        HoverHints::install(hint);
         connect(&video, &VideoInput::frameReady, this, [this](const QImage &frame) { receiveFrame(frame); });
         connect(&video, &VideoInput::errorOccurred, this, [this](const QString &error) { status->setText(error); });
         connect(&video, &VideoInput::sourceReset, this, [this] {
@@ -443,6 +456,7 @@ public:
     void storeSettings(QSettings &settings)
     {
         settings.setValue("window/search", signalPanel->filter());
+        settings.setValue("window/filters", filtersAction->isChecked());
         settings.setValue("window/geometry", saveGeometry());
         settings.setValue("window/split", split->saveState());
         if (cameraChoice->currentIndex() >= 0)
@@ -522,6 +536,7 @@ private:
         open->setShortcut(QKeySequence::Open);
         connect(open, &QAction::triggered, this, [this] { loadConfiguration(); });
         auto *recent = file->addMenu("Open &Recent");
+        HoverHints::watch(recent);
         connect(recent, &QMenu::aboutToShow, this, [this, recent] {
             recent->clear();
             const auto paths = QSettings().value("recentConfigurations").toStringList();
@@ -540,6 +555,13 @@ private:
         auto *saveAs = file->addAction("Save &As…");
         saveAs->setShortcut(QKeySequence::SaveAs);
         connect(saveAs, &QAction::triggered, this, [this] { saveConfiguration(true); });
+
+        auto *view = bar->addMenu("&View");
+        filtersAction = view->addAction("Signal &Filters");
+        filtersAction->setCheckable(true);
+        filtersAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M)); // Command on a Mac
+        filtersAction->setToolTip("The filters of the selected signal, with the signal before and after each one");
+        HoverHints::watch(view);
 
         auto *about = bar->addMenu("&Help")->addAction("About MpOsc");
         about->setMenuRole(QAction::AboutRole);
@@ -744,7 +766,8 @@ private:
     QString configurationPath;
     QSplitter *split;
     VideoPreview *picture;
-    QLabel *status;
+    QLabel *status, *hint;
+    QAction *filtersAction;
     VideoInput video;
     MediaPipeClient mediapipe;
     QTimer timer;

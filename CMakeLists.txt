@@ -14,7 +14,7 @@ qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
     src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
     src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
     src/engine/MediaPipeRuntime.cpp src/engine/SignalFilters.cpp src/engine/SignalFilters.h src/engine/Signals.cpp src/engine/VideoInput.cpp src/engine/VideoInput.h
-    src/ui/About.cpp src/ui/About.h src/ui/FilterEditor.cpp src/ui/FilterEditor.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
+    src/ui/About.cpp src/ui/About.h src/ui/HoverHints.cpp src/ui/HoverHints.h src/ui/FilterEditor.cpp src/ui/FilterEditor.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
     src/ui/Theme.cpp src/ui/TrackingOverlay.cpp
     src/ui/VideoPreview.h)
 # Sources include each other by file name: engine (no widgets), ui (widgets), app (entry point and self-test)
@@ -76,4 +76,19 @@ elseif(WIN32)
     target_link_libraries(mposc_spout PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
     target_sources(MpOsc PRIVATE src/engine/SpoutInput.cpp)
     target_link_libraries(MpOsc PRIVATE mposc_spout)
+endif()
+
+# The signal panel and its filters, in a window of their own (no camera, no MediaPipe)
+option(MPOSC_TESTS "Build the interface tests" ON)
+if(MPOSC_TESTS)
+    enable_testing()
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(mposc_ui_test tests/ui_test.cpp
+        src/engine/Destinations.cpp src/engine/SignalFilters.cpp src/engine/Signals.cpp
+        src/ui/FilterEditor.cpp src/ui/HoverHints.cpp src/ui/SignalPanel.cpp src/ui/Theme.cpp)
+    set_target_properties(mposc_ui_test PROPERTIES AUTOMOC ON)
+    target_include_directories(mposc_ui_test PRIVATE src/engine src/ui)
+    target_link_libraries(mposc_ui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Test pxs::osc pxs::theme pxs::widgets pxs::interaction)
+    add_test(NAME ui COMMAND mposc_ui_test)
+    set_tests_properties(ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

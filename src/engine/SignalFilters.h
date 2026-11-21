@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -34,16 +35,37 @@ FilterChain chainFromText(const QString &text);
 // What a filtered value is for the signal's type, as OSC and the namespace say it: a bool, an int, a double
 QVariant signalValue(SignalType type, double value);
 
+// The text of a value of a signal: on / off, a count, a measure (in degrees for an angle)
+QString signalText(SignalType type, bool angle, double value);
+// Where a value is on a bar that runs from `minimum` to `maximum` (0 to 1000 for a measure, 0 to 2 for a count, the degrees of an angle)
+int signalLevel(SignalType type, bool angle, int minimum, int maximum, double value);
+
 // One signal's chain, running: its value goes in, the filtered value comes out
 class SignalFilter {
 public:
-    void setChain(FilterChain chain) { it.filters = std::move(chain); }
+    void setChain(FilterChain chain)
+    {
+        it.filters = std::move(chain);
+        if (trace) rebuildTrace();
+    }
     const FilterChain &chain() const { return it.filters; }
     // A new value of the signal, `dt` seconds after the last; the value after the chain
     double step(double raw, double dt);
-    void reset() { processor.reset(); }
+    void reset();
+    // The value after each filter of the chain (one more pass of the chain per filter): wanted for the signal being looked at only
+    void setTraced(bool on);
+    bool traced() const { return trace; }
+    const std::vector<double> &afterEach() const { return stages; }
 
 private:
+    void rebuildTrace();
+    struct Prefix { // the chain up to one filter, running on the same values
+        Interaction it;
+        InteractionProcessor processor;
+    };
     Interaction it;
     InteractionProcessor processor;
+    bool trace = false;
+    std::vector<std::shared_ptr<Prefix>> prefixes;
+    std::vector<double> stages;
 };

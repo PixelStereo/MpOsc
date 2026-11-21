@@ -3,6 +3,7 @@
 #include "Destinations.h"
 #include "FilterEditor.h"
 #include "OscCodec.h"
+#include "SignalMeter.h"
 #include "SignalWidgets.h"
 #include "Signals.h"
 
@@ -22,13 +23,6 @@
 
 namespace {
 QString settingsKey(const QString &address) { return QStringLiteral("signals") + address; }
-
-QString valueText(SignalType type, bool angle, double value)
-{
-    if (type == SignalType::Bool) return value >= 0.5 ? QStringLiteral("on") : QStringLiteral("off");
-    if (type == SignalType::Int) return QString::number(std::lround(value));
-    return angle ? QString::number(value, 'f', 1) + QStringLiteral("°") : QString::number(value, 'f', 3);
-}
 
 // The chain of another signal, for this one: what its type has no use for is left out, an inversion is this signal's own
 FilterChain adapted(const FilterChain &chain, const QString &address)
@@ -115,6 +109,7 @@ SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
     tables->addWidget(table, 1);
     editor = new FilterEditor;
     editor->setMinimumWidth(250);
+    editor->hide(); // opened with Ctrl+M
     auto *split = new QSplitter(Qt::Horizontal);
     split->setChildrenCollapsible(false);
     split->addWidget(left);
@@ -289,7 +284,7 @@ void SignalPanel::buildItem(const QString &address, Row &row)
     nameLayout->addWidget(name, 1);
     view->setItemWidget(item, 0, nameCell);
 
-    auto *meter = new QProgressBar;
+    auto *meter = new SignalMeter;
     const auto type = signalType(address);
     if (isAngle(address)) {
         const int limit = address.endsWith("/pitch") ? 90 : 180;
@@ -339,8 +334,26 @@ SignalPanel::Row SignalPanel::makeRow(const QString &address)
 void SignalPanel::select(const QString &address)
 {
     selected = address;
+    for (auto &row : rows) row.filter.setTraced(false);
+    const auto row = rows.find(address);
+    if (row != rows.end()) row->filter.setTraced(editor->isVisible()); // only the one looked at is traced
     editor->setSignal(address, chainOf(address));
 }
+
+void SignalPanel::setChainOf(const QString &address, FilterChain chain)
+{
+    setChain(address, std::move(chain), true);
+    if (address == selected) editor->setSignal(address, chainOf(address));
+}
+
+void SignalPanel::setFiltersShown(bool shown)
+{
+    editor->setVisible(shown);
+    const auto row = rows.find(selected);
+    if (row != rows.end()) row->filter.setTraced(shown);
+}
+
+bool SignalPanel::filtersShown() const { return !editor->isHidden(); }
 
 void SignalPanel::setChain(const QString &address, FilterChain chain, bool save)
 {
@@ -424,21 +437,21 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
         if (available) {
             const double raw = values.value(address);
             output = i->filter.step(raw, dt);
-            i->raw = valueText(type, angle, raw);
-            i->shown = valueText(type, angle, signalValue(type, output).toDouble());
-            i->level = qRound(type == SignalType::Bool ? (output >= 0.5 ? 1000 : 0)
-                              : type == SignalType::Int ? std::clamp(output, 0.0, 2.0)
-                              : angle ? std::clamp(output, double(i->meter->minimum()), double(i->meter->maximum()))
-                                      : 1000 * std::clamp(output, 0.0, 1.0));
+            i->raw = signalText(type, angle, raw);
+            i->shown = signalText(type, angle, signalValue(type, output).toDouble());
+            i->level = signalLevel(type, angle, i->meter->minimum(), i->meter->maximum(), raw); // the bar is the signal itself
         } else {
             if (i->initialized) i->filter.reset(); // when it is back, the filters start from its value
             i->raw = i->shown = QStringLiteral("—");
             i->level = i->meter->minimum();
         }
         i->initialized = available;
-        i->meter->setFormat(i->shown);
+        const bool filtered = !i->filter.chain().empty();
+        i->meter->setFormat(filtered ? i->shown : i->raw); // the text is what is sent
         i->meter->setValue(i->level);
-        if (address == selected) editor->setLive(i->raw, i->shown);
+        i->meter->setFiltered(filtered && available, available ? signalLevel(type, angle, i->meter->minimum(), i->meter->maximum(), output) : 0);
+        if (address == selected && editor->isVisible())
+            editor->setTrace(available, available ? values.value(address) : 0.0, i->filter.afterEach());
         if (available && signalFired) signalFired(address, signalValue(type, output));
         if (!armed || !i->send->isChecked()) { i->sent = false; continue; }
         if (!available && !i->sent) continue;

@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <algorithm>
 #include <cmath>
 
 bool isAngle(const QString &address) { return address.startsWith(QLatin1String("/face/head/")); }
@@ -61,7 +62,60 @@ QVariant signalValue(SignalType type, double value)
 double SignalFilter::step(double raw, double dt)
 {
     processor.input(it, raw);
-    return processor.step(it, dt).value_or(raw);
+    const double out = processor.step(it, dt).value_or(raw);
+    if (trace) {
+        if (prefixes.size() != it.filters.size()) rebuildTrace();
+        for (size_t k = 0; k < prefixes.size(); ++k) {
+            Prefix &p = *prefixes[k];
+            p.processor.input(p.it, raw);
+            stages[k] = p.processor.step(p.it, dt).value_or(k ? stages[k - 1] : raw);
+        }
+    }
+    return out;
+}
+
+void SignalFilter::reset()
+{
+    processor.reset();
+    for (auto &p : prefixes) p->processor.reset();
+}
+
+void SignalFilter::setTraced(bool on)
+{
+    if (on == trace) return;
+    trace = on;
+    if (on) rebuildTrace();
+    else {
+        prefixes.clear();
+        stages.clear();
+    }
+}
+
+void SignalFilter::rebuildTrace()
+{
+    prefixes.clear();
+    for (size_t k = 0; k < it.filters.size(); ++k) {
+        auto p = std::make_shared<Prefix>();
+        p->it = it;
+        p->it.filters.assign(it.filters.begin(), it.filters.begin() + qsizetype(k) + 1);
+        prefixes.push_back(std::move(p));
+    }
+    stages.assign(it.filters.size(), 0.0);
+}
+
+QString signalText(SignalType type, bool angle, double value)
+{
+    if (type == SignalType::Bool) return value >= 0.5 ? QStringLiteral("on") : QStringLiteral("off");
+    if (type == SignalType::Int) return QString::number(std::lround(value));
+    return angle ? QString::number(value, 'f', 1) + QStringLiteral("°") : QString::number(value, 'f', 3);
+}
+
+int signalLevel(SignalType type, bool angle, int minimum, int maximum, double value)
+{
+    return int(std::lround(type == SignalType::Bool ? (value >= 0.5 ? 1000 : 0)
+                           : type == SignalType::Int ? std::clamp(value, 0.0, 2.0)
+                           : angle ? std::clamp(value, double(minimum), double(maximum))
+                                   : 1000 * std::clamp(value, 0.0, 1.0)));
 }
 
 QStringList filterGroups() { return {QStringLiteral("Smooth"), QStringLiteral("Time"), QStringLiteral("Trigger"), QStringLiteral("Shape")}; }
