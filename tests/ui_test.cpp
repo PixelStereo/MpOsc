@@ -1,4 +1,4 @@
-#include "FilterEditor.h"
+#include <pxs/FilterEditor.h>
 #include "HoverHints.h"
 #include "SignalFilters.h"
 #include "SignalPanel.h"
@@ -64,6 +64,28 @@ private slots:
         QVERIFY(filter.afterEach().empty());
     }
 
+    void aCurveAndAnEnvelopeAreDrawnInTheEditor()
+    {
+        const auto offered = filtersOffered("/face/jawOpen");
+        QVERIFY(std::find(offered.begin(), offered.end(), InteractionFilter::Curve) != offered.end());
+        QVERIFY(std::find(offered.begin(), offered.end(), InteractionFilter::Envelope) != offered.end());
+        SignalPanel panel;
+        panel.resize(900, 700);
+        panel.show();
+        panel.update(frame(0.0), "127.0.0.1:9", false); // the signal is there
+        panel.setFiltersShown(true);
+        panel.selectSignal("/face/jawOpen");
+        panel.setChainOf("/face/jawOpen", {InteractionStage::made(InteractionFilter::Curve), InteractionStage::made(InteractionFilter::Envelope)});
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
+        QVERIFY(editor);
+        // The cards are folded: unfold them
+        for (auto *fold : editor->findChildren<QToolButton *>())
+            if (fold->arrowType() == Qt::RightArrow) fold->click();
+        QTest::qWait(50);
+        QVERIFY(editor->findChild<QWidget *>("filterCurve0")); // the drawn curve
+        QVERIFY(editor->findChild<QWidget *>("adsrCurve"));    // the envelope in the hand
+    }
+
     void filtersAreReorderedByDragging()
     {
         SignalPanel panel;
@@ -75,7 +97,7 @@ private slots:
         FilterChain three = slowChain();
         three.push_back(InteractionStage::made(InteractionFilter::Threshold));
         panel.setChainOf("/face/jawOpen", three);
-        auto *editor = panel.findChild<FilterEditor *>();
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
         auto *list = editor->findChild<QListWidget *>();
         QVERIFY(list && list->count() == 3);
         QTest::qWait(50);
@@ -89,7 +111,7 @@ private slots:
         // What a drag of the first card carries, dropped below the last (a real drag needs a real mouse: the drag of the platform
         // under test does not start from synthetic events, so the events of the drag are sent to the list as it would get them)
         auto *mime = new QMimeData;
-        mime->setData("application/x-mposc-filter", "0");
+        mime->setData("application/x-pxs-filter", "0");
         const QPoint at = list->visualItemRect(list->item(2)).bottomLeft() + QPoint(40, 6);
         QDragEnterEvent enter(at, Qt::MoveAction, mime, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(list->viewport(), &enter);
@@ -106,7 +128,7 @@ private slots:
         QCOMPARE(after.first(), before[1]);
         // And the last one back to the top (dropped above the first card); the cards are rebuilt in their new order, with their bars
         auto *up = new QMimeData;
-        up->setData("application/x-mposc-filter", "2");
+        up->setData("application/x-pxs-filter", "2");
         const QPoint top = list->visualItemRect(list->item(0)).topLeft() + QPoint(40, 2);
         QDragEnterEvent enter2(top, Qt::MoveAction, up, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(list->viewport(), &enter2);
@@ -115,7 +137,7 @@ private slots:
         QTest::qWait(300);
         QCOMPARE(order(), before);
         QCOMPARE(list->count(), 3);
-        QCOMPARE(editor->findChildren<QProgressBar *>("signalValue").size(), 1 + 3);
+        QCOMPARE(editor->findChildren<QProgressBar *>("signalValue").size(), 2); // the signal in, the signal out
     }
 
     void filtersAreHiddenUntilAsked()
@@ -137,19 +159,24 @@ private slots:
         panel.update(frame(0.0), "127.0.0.1:9", false);
         panel.setFiltersShown(true);
         panel.selectSignal("/face/jawOpen");
-        auto *editor = panel.findChild<FilterEditor *>();
+        auto *editor = panel.findChild<pxs::filterview::FilterEditor *>();
         QVERIFY(editor);
         // The signal alone: its bar, and no filter yet
-        auto bars = [&] { return editor->findChildren<QProgressBar *>("signalValue"); };
+        auto bars = [&] {
+            QList<QProgressBar *> shown;
+            for (auto *bar : editor->findChildren<QProgressBar *>("signalValue"))
+                if (bar->isVisibleTo(editor)) shown << bar;
+            return shown;
+        };
         QCOMPARE(bars().size(), 1);
         panel.setChainOf("/face/jawOpen", slowChain());
-        QCOMPARE(bars().size(), 1 + 2); // the signal as it comes in, then the signal after each filter
+        QCOMPARE(bars().size(), 2); // the signal as it comes in, then the signal after the filters
         for (int i = 0; i < 40; ++i) {
             panel.update(frame(i < 5 ? 0.0 : 1.0), "127.0.0.1:9", false);
             QTest::qWait(8);
         }
         const auto all = bars();
-        // The top one is the signal itself; the others, what each filter makes of it: the slow smoothing is behind, the signal is not
+        // The top one is the signal itself; the one after the filters is what they make of it: the slow smoothing is behind, the signal is not
         QCOMPARE(all.first()->format(), QString("1.000"));
         QVERIFY(all[1]->value() < all.first()->value());
         QVERIFY(all[1]->format() != all.first()->format());

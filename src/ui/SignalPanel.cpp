@@ -1,9 +1,9 @@
 #include "SignalPanel.h"
 
 #include "Destinations.h"
-#include "FilterEditor.h"
 #include "OscCodec.h"
-#include "SignalMeter.h"
+#include <pxs/SignalMeter.h>
+#include "HoverHints.h"
 #include "SignalWidgets.h"
 #include "Signals.h"
 
@@ -107,6 +107,8 @@ SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
     tables->setContentsMargins(0, 0, 0, 0);
     tables->addWidget(pinnedTable);
     tables->addWidget(table, 1);
+    using pxs::filterview::FilterEditor;
+    pxs::filterview::setMenuWatcher([](QMenu *menu) { HoverHints::watch(menu); });
     editor = new FilterEditor;
     editor->setMinimumWidth(250);
     editor->hide(); // opened with Ctrl+M
@@ -117,8 +119,8 @@ SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
     controls->addWidget(split, 1);
-    connect(editor, &FilterEditor::chainChanged, this, [this](const QString &address, const FilterChain &chain, bool final) {
-        setChain(address, chain, final);
+    connect(editor, &FilterEditor::chainChanged, this, [this](const FilterChain &chain, bool final) {
+        if (!selected.isEmpty()) setChain(selected, chain, final);
     });
     connect(table, &QTreeWidget::itemExpanded, this, [](QTreeWidgetItem *item) {
         QSettings().setValue("window/collapsed" + item->data(0, Qt::UserRole).toString(), false);
@@ -167,7 +169,7 @@ void SignalPanel::clear()
     selected.clear();
     table->clear();
     pinnedTable->clear();
-    editor->setSignal({}, {});
+    editor->clearSignal();
     resizePinnedTable();
 }
 
@@ -284,7 +286,7 @@ void SignalPanel::buildItem(const QString &address, Row &row)
     nameLayout->addWidget(name, 1);
     view->setItemWidget(item, 0, nameCell);
 
-    auto *meter = new SignalMeter;
+    auto *meter = new pxs::filterview::SignalMeter;
     const auto type = signalType(address);
     if (isAngle(address)) {
         const int limit = address.endsWith("/pitch") ? 90 : 180;
@@ -337,13 +339,13 @@ void SignalPanel::select(const QString &address)
     for (auto &row : rows) row.filter.setTraced(false);
     const auto row = rows.find(address);
     if (row != rows.end()) row->filter.setTraced(editor->isVisible()); // only the one looked at is traced
-    editor->setSignal(address, chainOf(address));
+    editor->setSignal(filterSignal(address), chainOf(address));
 }
 
 void SignalPanel::setChainOf(const QString &address, FilterChain chain)
 {
     setChain(address, std::move(chain), true);
-    if (address == selected) editor->setSignal(address, chainOf(address));
+    if (address == selected) editor->setSignal(filterSignal(address), chainOf(address));
 }
 
 void SignalPanel::setFiltersShown(bool shown)
@@ -378,7 +380,7 @@ void SignalPanel::familyMenu(const QString &family, const QPoint &globalPosition
     const auto each = [this, members](const std::function<FilterChain(const QString &, FilterChain)> &change) {
         for (const auto &address : members) {
             setChain(address, change(address, chainOf(address)), true);
-            if (address == selected) editor->setSignal(address, chainOf(address));
+            if (address == selected) editor->setSignal(filterSignal(address), chainOf(address));
         }
     };
     QMenu menu;
@@ -394,7 +396,7 @@ void SignalPanel::familyMenu(const QString &family, const QPoint &globalPosition
     for (const auto &address : members)
         for (auto kind : filtersOffered(address))
             if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) kinds.push_back(kind);
-    addFilterActions(add, kinds, [each](InteractionFilter kind) {
+    pxs::filterview::addFilterActions(add, kinds, [each](InteractionFilter kind) {
         each([kind](const QString &address, FilterChain chain) {
             const auto offered = filtersOffered(address);
             if (std::find(offered.begin(), offered.end(), kind) != offered.end()) chain.push_back(InteractionStage::made(kind));
