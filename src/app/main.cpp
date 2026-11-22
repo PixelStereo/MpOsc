@@ -12,7 +12,8 @@
 #include "VideoInput.h"
 #include <pxs/Bind.h>
 #include <pxs/OscService.h>
-#include <pxs/Tree.h>
+#include <pxs/Convert.h>
+#include <pxs/core/tree/tree.h>
 #include "VideoPreview.h"
 #include "Worker.h"
 #include "MpOscVersion.h"
@@ -445,9 +446,10 @@ public:
         // The signals are listed in the namespace (what MpOsc sends, to the destinations it has itself) before the rows
         // saved in the settings are made
         signalPanel->setSignalKnown([this](const QString &address) {
-            if (!tree.find(address)) tree.addSignal(address, signalTypeTag(signalType(address)), "A tracking signal MpOsc sends to its destinations");
+            const std::string path = pxs::convert::toUtf8(address);
+            if (!tree.find(path)) tree.addSignal(path, pxs::convert::toUtf8(signalTypeTag(signalType(address))), "A tracking signal MpOsc sends to its destinations");
         });
-        signalPanel->setSignalFired([this](const QString &address, const QVariant &value) { tree.fire(address, {value}); });
+        signalPanel->setSignalFired([this](const QString &address, const QVariant &value) { tree.fire(pxs::convert::toUtf8(address), {pxs::convert::toValue(value)}); });
         signalPanel->restoreRows(settings);
         exposeControls(settings);
         timer.start(33);
@@ -757,7 +759,7 @@ private:
     QLineEdit *destinations;
     SignalPanel *signalPanel;
     QPushButton *send, *previewMirror, *previewLandmarks, *stopButton, *startCameraButton;
-    pxs::Tree tree;
+    pxs::core::tree::Tree tree;
     std::unique_ptr<pxs::OscService> service;
     QButtonGroup *inputModes;
     QStackedWidget *inputPages;
