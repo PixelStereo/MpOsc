@@ -5,9 +5,9 @@
 **Turn movement into live OSC.** Use a camera, a video, Syphon on macOS or Spout on Windows to play your visuals, sound and lighting with your face, hands and body. Tracking runs on your machine.
 
 <!-- release-downloads:start -->
-**LATEST VERSION · [v0.3.3](https://github.com/PixelStereo/MpOsc/releases/tag/v0.3.3)**
+**LATEST VERSION · [v0.3.4](https://github.com/PixelStereo/MpOsc/releases/tag/v0.3.4)**
 
-[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple_Silicon-6b7787?style=for-the-badge&logo=apple&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/MpOsc/releases/download/v0.3.3/MpOsc-macos-arm64-v0.3.3.zip)&nbsp;&nbsp;[![Windows Installer](https://img.shields.io/badge/Windows-Installer-2b6fb6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/MpOsc/releases/download/v0.3.3/MpOsc-windows-x64-v0.3.3-Setup.exe)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple_Silicon-6b7787?style=for-the-badge&logo=apple&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/MpOsc/releases/download/v0.3.4/MpOsc-macos-arm64-v0.3.4.zip)&nbsp;&nbsp;[![Windows Installer](https://img.shields.io/badge/Windows-Installer-2b6fb6?style=for-the-badge&logo=windows&logoColor=white&labelColor=1a1c20)](https://github.com/PixelStereo/MpOsc/releases/download/v0.3.4/MpOsc-windows-x64-v0.3.4-Setup.exe)
 <!-- release-downloads:end -->
 
 On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows x64**, run the installer and launch MpOsc from the Start menu.
