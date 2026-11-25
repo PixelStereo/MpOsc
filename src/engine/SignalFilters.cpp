@@ -62,45 +62,14 @@ QVariant signalValue(SignalType type, double value)
 double SignalFilter::step(double raw, double dt)
 {
     processor.input(it, raw);
-    const double out = processor.step(it, dt).value_or(raw);
-    if (trace) {
-        if (prefixes.size() != it.filters.size()) rebuildTrace();
-        for (size_t k = 0; k < prefixes.size(); ++k) {
-            Prefix &p = *prefixes[k];
-            p.processor.input(p.it, raw);
-            stages[k] = p.processor.step(p.it, dt).value_or(k ? stages[k - 1] : raw);
-        }
-    }
-    return out;
+    return processor.step(it, dt).value_or(raw);
 }
 
-void SignalFilter::reset()
+const std::vector<double> &SignalFilter::afterEach() const
 {
-    processor.reset();
-    for (auto &p : prefixes) p->processor.reset();
-}
-
-void SignalFilter::setTraced(bool on)
-{
-    if (on == trace) return;
-    trace = on;
-    if (on) rebuildTrace();
-    else {
-        prefixes.clear();
-        stages.clear();
-    }
-}
-
-void SignalFilter::rebuildTrace()
-{
-    prefixes.clear();
-    for (size_t k = 0; k < it.filters.size(); ++k) {
-        auto p = std::make_shared<Prefix>();
-        p->it = it;
-        p->it.filters.assign(it.filters.begin(), it.filters.begin() + qsizetype(k) + 1);
-        prefixes.push_back(std::move(p));
-    }
-    stages.assign(it.filters.size(), 0.0);
+    static const std::vector<double> none;
+    const auto &stages = processor.stageOutputs();
+    return trace && stages.size() == it.filters.size() ? stages : none; // a chain just changed: nothing until its next step
 }
 
 QString signalText(SignalType type, bool angle, double value)

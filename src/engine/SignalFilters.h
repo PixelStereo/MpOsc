@@ -7,7 +7,6 @@
 #include <QString>
 #include <QStringList>
 #include <QVariant>
-#include <memory>
 #include <optional>
 #include <vector>
 
@@ -37,32 +36,22 @@ QString signalText(SignalType type, bool angle, double value);
 // Where a value is on a bar that runs from `minimum` to `maximum` (0 to 1000 for a measure, 0 to 2 for a count, the degrees of an angle)
 int signalLevel(SignalType type, bool angle, int minimum, int maximum, double value);
 
-// One signal's chain, running: its value goes in, the filtered value comes out
+// One signal's chain, running on pxs-core's filters (through pxs-qt's InteractionProcessor): its value goes in, the filtered
+// value comes out
 class SignalFilter {
 public:
-    void setChain(FilterChain chain)
-    {
-        it.filters = std::move(chain);
-        if (trace) rebuildTrace();
-    }
+    void setChain(FilterChain chain) { it.filters = std::move(chain); }
     const FilterChain &chain() const { return it.filters; }
     // A new value of the signal, `dt` seconds after the last; the value after the chain
     double step(double raw, double dt);
-    void reset();
-    // The value after each filter of the chain (one more pass of the chain per filter): wanted for the signal being looked at only
-    void setTraced(bool on);
+    void reset() { processor.reset(); }
+    // The value after each filter of the chain, as pxs-core gives it: shown for the signal being looked at only
+    void setTraced(bool on) { trace = on; }
     bool traced() const { return trace; }
-    const std::vector<double> &afterEach() const { return stages; }
+    const std::vector<double> &afterEach() const;
 
 private:
-    void rebuildTrace();
-    struct Prefix { // the chain up to one filter, running on the same values
-        Interaction it;
-        InteractionProcessor processor;
-    };
     Interaction it;
     InteractionProcessor processor;
     bool trace = false;
-    std::vector<std::shared_ptr<Prefix>> prefixes;
-    std::vector<double> stages;
 };
