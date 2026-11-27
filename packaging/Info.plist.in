@@ -10,4 +10,6 @@
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>@PROJECT_VERSION@</string>
 <key>NSCameraUsageDescription</key><string>MpOsc analyzes camera frames locally to produce OSC signals.</string>
+<key>NSLocalNetworkUsageDescription</key><string>MpOsc discovers, receives and publishes OMT video on the local network.</string>
+<key>NSBonjourServices</key><array><string>_omt._tcp</string></array>
 </dict></plist>

@@ -10,6 +10,7 @@
 #include "About.h"
 #include "Theme.h"
 #include "VideoInput.h"
+#include "VideoOutput.h"
 #include <pxs/Bind.h>
 #include <pxs/OscService.h>
 #include <pxs/Convert.h>
@@ -45,6 +46,7 @@
 #include <memory>
 #include <utility>
 #include <algorithm>
+#include <vector>
 #include <cmath>
 
 namespace {
@@ -133,56 +135,64 @@ public:
             source->addWidget(mode);
         };
         addInputMode(cameraMode, cameraPage, "camera");
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        const auto addStreamMode = [&](QString label, const char *key, StreamMode &mode) {
+            mode.label = label;
+            auto *button = new QPushButton(label);
+            auto *page = new QWidget;
+            auto *row = new QHBoxLayout(page);
+            row->setContentsMargins(0, 0, 0, 0);
+            mode.name = new QLabel("Select a running sender");
+            mode.name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            auto *choose = new QPushButton("Choose sender…");
+            row->addWidget(mode.name, 1);
+            row->addWidget(choose);
+            addInputMode(button, page, key);
+            mode.page = inputModes->id(button);
+            connect(choose, &QPushButton::clicked, this, [this, choose, &mode] {
+                QMenu menu;
+                for (const auto &sender : streamSenders(mode)) {
+                    auto *action = menu.addAction(sender.label);
+                    action->setData(sender.id);
+                }
+                if (menu.isEmpty()) menu.addAction("No senders found")->setEnabled(false);
+                QAction *flip = nullptr;
+                if (&mode == &sharedMode) {
+                    menu.addSeparator();
+                    flip = menu.addAction("Flip vertically");
+                    flip->setCheckable(true);
+                    flip->setChecked(video.sharedFlip());
+                }
+                const auto *choice = menu.exec(choose->mapToGlobal(QPoint(0, choose->height())));
+                if (!choice) return;
+                if (choice == flip) {
+                    video.setSharedFlip(flip->isChecked());
+                    return;
+                }
+                auto receiver = openStream(mode, choice->data().toString());
+                if (receiver)
+                    startStream(mode, choice->text(), std::move(receiver));
+                else
+                    status->setText(QStringLiteral("Could not open %1 sender").arg(mode.label));
+            });
+        };
 #ifdef Q_OS_MACOS
-        const auto sharedLabel = QStringLiteral("Syphon");
         video.setSharedFlip(settings.value("video/sharedFlip", true).toBool());
-#else
-        const auto sharedLabel = QStringLiteral("Spout");
+        addStreamMode("Syphon", "shared", sharedMode);
+#elif defined(Q_OS_WIN)
         video.setSharedFlip(settings.value("video/sharedFlip", false).toBool());
+        addStreamMode("Spout", "shared", sharedMode);
 #endif
-        auto *sharedMode = new QPushButton(sharedLabel);
-        auto *sharedPage = new QWidget;
-        auto *sharedLayout = new QHBoxLayout(sharedPage);
-        sharedLayout->setContentsMargins(0, 0, 0, 0);
-        auto *sharedName = new QLabel("Select a running sender");
-        sharedName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        auto *sharedButton = new QPushButton("Choose sender…");
-        sharedLayout->addWidget(sharedName, 1);
-        sharedLayout->addWidget(sharedButton);
-        addInputMode(sharedMode, sharedPage, "shared");
-        connect(sharedButton, &QPushButton::clicked, this, [this, sharedButton, sharedLabel, sharedName] {
-            QMenu menu;
-            for (const auto &sender : sharedSenders()) {
-                auto *action = menu.addAction(sender.label);
-                action->setData(sender.id);
-            }
-            if (menu.isEmpty()) menu.addAction("No senders found")->setEnabled(false);
-            menu.addSeparator();
-            auto *flip = menu.addAction("Flip vertically");
-            flip->setCheckable(true);
-            flip->setChecked(video.sharedFlip());
-            const auto *choice = menu.exec(sharedButton->mapToGlobal(QPoint(0, sharedButton->height())));
-            if (!choice) return;
-            if (choice == flip) {
-                video.setSharedFlip(flip->isChecked());
-                return;
-            }
-            auto receiver = openSharedSender(choice->data().toString());
-            if (!receiver) {
-                status->setText(QStringLiteral("Could not open %1 sender").arg(sharedLabel));
-                return;
-            }
-            stopSource();
-            video.openShared(std::move(receiver));
-            stopButton->setEnabled(true);
-            sharedName->setText(choice->text());
-            status->setText(QStringLiteral("Waiting for %1 · %2").arg(sharedLabel, choice->text()));
-        });
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        addStreamMode("OMT", "omt", omtMode);
 #endif
         addInputMode(fileMode, filePage, "file");
-        selectInputMode(settings.value("video/inputMode", "camera").toString());
-        connect(inputModes, &QButtonGroup::idClicked, inputPages, &QStackedWidget::setCurrentIndex);
+        connect(inputModes, &QButtonGroup::idClicked, this, [this](int id) {
+            if (inputPages->currentIndex() == id &&
+                (pendingStream || video.source() != VideoInput::Source::None)) return;
+            stopSource();
+            inputPages->setCurrentIndex(id);
+            activateStreamMode();
+        });
         source->addSpacing(8);
         source->addWidget(inputPages, 1);
         source->addWidget(stop);
@@ -271,6 +281,39 @@ public:
         oscBar->addWidget(destinations, 1);
         oscBar->addWidget(send);
         layout->addLayout(oscBar);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        auto *videoOutput = section("Video Output");
+        auto *composition = new QComboBox;
+        composition->addItem("Image + landmarks");
+        composition->addItem("Landmarks only");
+        videoOutput->addWidget(composition);
+        connect(composition, &QComboBox::currentIndexChanged, this, [this](int index) {
+            landmarksOnly = index == 1;
+        });
+        const auto addOutput = [&](const QString &label, std::unique_ptr<VideoOutput> &output,
+                                   std::unique_ptr<VideoOutput> (*openOutput)(const QString &)) {
+            auto *button = new QPushButton(label);
+            styleToggle(button);
+            videoOutput->addWidget(button);
+            connect(button, &QPushButton::toggled, this, [this, button, label, &output, openOutput](bool on) {
+                if (!on) {
+                    output.reset();
+                    return;
+                }
+                output = openOutput(QStringLiteral("MpOsc Landmarks"));
+                if (output) return;
+                const QSignalBlocker block(button);
+                button->setChecked(false);
+                status->setText(QStringLiteral("Could not start %1 video output").arg(label));
+            });
+        };
+#ifdef Q_OS_MACOS
+        addOutput("Syphon", syphonOutput, openSyphonOutput);
+#endif
+        addOutput("OMT", omtOutput, openOmtOutput);
+        videoOutput->addStretch();
+#endif
+
         split = new QSplitter;
         picture = new VideoPreview;
         const QRectF fullFrame(0, 0, 1, 1);
@@ -302,10 +345,10 @@ public:
         previewTools->addStretch();
         previewTools->addWidget(mirror);
         previewTools->addWidget(overlay);
-        previewLayout->addLayout(previewTools);
         resolution = new QLabel("No video frame");
-        telemetry = new QLabel("Waiting for input");
+        telemetry = new QLabel(analysisStatus);
         previewLayout->addWidget(resolution);
+        previewLayout->addLayout(previewTools);
         previewLayout->addWidget(telemetry);
         connect(roi, &QPushButton::toggled, picture, [this](bool enabled) {
             picture->editRoi = enabled;
@@ -385,8 +428,9 @@ public:
         connect(send, &QPushButton::toggled, this, [this](bool on) { signalPanel->setSending(on); });
         signalPanel->setSending(send->isChecked());
         connect(&mediapipe, &MediaPipeClient::statusChanged, this, [this](const QString &text, const QString &details) {
-            status->setText(text);
-            if (!details.isEmpty()) status->setToolTip(details);
+            analysisStatus = text;
+            telemetry->setText(text);
+            telemetry->setToolTip(details);
         });
         connect(&mediapipe, &MediaPipeClient::resultReady, this, [this](const QJsonObject &result) {
             if (!active) return;
@@ -400,12 +444,19 @@ public:
             if (current) {
                 updateTelemetry(result);
                 status->setText(signalPanel->update(result, destinations->text(), send->isChecked()));
+                publishFrame(submittedSource, submittedRoi, result);
             }
         });
         mediapipe.start();
         connect(&timer, &QTimer::timeout, this, [this] {
-            if (mediapipe.isBusy()) return;
+            pollStreams();
             video.poll();
+            if (!sourceSize.isEmpty() && frameRateClock.elapsed() >= 1000) {
+                frameRate = frameCount * 1000.0 / frameRateClock.restart();
+                frameCount = 0;
+                updateSizeLabel();
+            }
+            if (mediapipe.isBusy()) return;
             if (latest.isNull()) return;
             if (picture->isDrawing()) {
                 picture->showFrame(latest);
@@ -452,7 +503,8 @@ public:
         signalPanel->setSignalFired([this](const QString &address, const QVariant &value) { tree.fire(pxs::convert::toUtf8(address), {pxs::convert::toValue(value)}); });
         signalPanel->restoreRows(settings);
         exposeControls(settings);
-        timer.start(33);
+        selectInputMode(settings.value("video/inputMode", "camera").toString());
+        timer.start(8);
     }
 
     void storeSettings(QSettings &settings)
@@ -482,8 +534,12 @@ public:
     {
         QSettings settings;
         storeSettings(settings);
+        timer.stop();
         stopSource();
         mediapipe.shutdown();
+        service.reset();
+        // Bound widgets unregister their observers when destroyed, while the tree is still alive.
+        qDeleteAll(findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly));
     }
 
 private:
@@ -521,6 +577,7 @@ private:
         }
         if (auto *button = inputModes->button(id)) button->setChecked(true);
         inputPages->setCurrentIndex(id);
+        activateStreamMode();
     }
 
     static bool configurationKey(const QString &key)
@@ -611,7 +668,15 @@ private:
         const auto rate = inferenceRate > 0 ? QString::number(inferenceRate, 'f', 1) + " fps" : QStringLiteral("— fps");
         const auto ms = result.value("inference_ms");
         const auto duration = ms.isDouble() ? QString::number(ms.toDouble(), 'f', 1) + " ms" : QStringLiteral("— ms");
-        QStringList labels{rate, duration};
+        QStringList labels{QStringLiteral("Analysis %1").arg(rate), duration};
+        for (auto entry = result.begin(); entry != result.end(); ++entry) {
+            if (entry.key() == "error" || entry.key().endsWith("_error")) {
+                telemetry->setText("MediaPipe analysis failed");
+                telemetry->setToolTip(entry.value().toString());
+                return;
+            }
+        }
+        telemetry->setToolTip({});
         for (const auto &entry : {std::pair{"face", "Face"}, {"hands", "Hands"}, {"pose", "Body"}})
             if (result.contains(entry.first)) labels << QStringLiteral("%1 %2").arg(entry.second).arg(result.value(entry.first).toArray().size());
         telemetry->setText(labels.join(QStringLiteral("  ·  ")));
@@ -695,9 +760,124 @@ private:
         status->setText("Configuration loaded");
     }
 
+    struct StreamMode {
+        QString label;
+        QLabel *name = nullptr;
+        int page = -1;
+    };
+
+    struct StreamCandidate {
+        SharedSender sender;
+        std::unique_ptr<SharedInput> receiver;
+    };
+
+    QList<SharedSender> streamSenders(const StreamMode &mode)
+    {
+        if (&mode == &omtMode)
+            return withoutOutput(omtSenders(), omtOutput);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        return withoutOutput(sharedSenders(), syphonOutput);
+#else
+        return {};
+#endif
+    }
+
+    static QList<SharedSender> withoutOutput(QList<SharedSender> senders, const std::unique_ptr<VideoOutput> &output)
+    {
+        if (output) {
+            const auto id = output->senderId();
+            senders.removeIf([&](const SharedSender &sender) { return sender.id == id; });
+        }
+        return senders;
+    }
+
+    std::unique_ptr<SharedInput> openStream(const StreamMode &mode, const QString &id)
+    {
+        if (&mode == &omtMode) return openOmtSender(id);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        return openSharedSender(id);
+#else
+        return {};
+#endif
+    }
+
+    void activateStreamMode()
+    {
+        for (auto *mode : {&sharedMode, &omtMode}) {
+            if (mode->page != inputPages->currentIndex() || !mode->name) continue;
+            if (mode == &omtMode && !omtAvailable()) {
+                mode->name->setText("OMT runtime unavailable");
+                return;
+            }
+            pendingStream = mode;
+            mode->name->setText(QStringLiteral("Waiting for a %1 sender…").arg(mode->label));
+            stopButton->setEnabled(true);
+            return;
+        }
+    }
+
+    void pollStreams()
+    {
+        if (!pendingStream) return;
+        if (!discoveryClock.isValid() || discoveryClock.elapsed() >= 500) {
+            discoveryClock.start();
+            const auto senders = streamSenders(*pendingStream);
+            candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&](const StreamCandidate &entry) {
+                return std::none_of(senders.begin(), senders.end(), [&](const SharedSender &sender) {
+                    return sender.id == entry.sender.id;
+                });
+            }), candidates.end());
+            for (const auto &sender : senders) {
+                if (std::any_of(candidates.begin(), candidates.end(), [&](const StreamCandidate &entry) {
+                    return entry.sender.id == sender.id;
+                })) continue;
+                if (auto receiver = openStream(*pendingStream, sender.id))
+                    candidates.push_back({sender, std::move(receiver)});
+            }
+        }
+        for (auto &entry : candidates) {
+            auto frame = entry.receiver->frame();
+            if (frame.isNull()) continue;
+            startStream(*pendingStream, entry.sender.label, std::move(entry.receiver), std::move(frame));
+            return;
+        }
+    }
+
+    void startStream(StreamMode &mode, QString name, std::unique_ptr<SharedInput> receiver, QImage firstFrame = {})
+    {
+        stopSource();
+        stopButton->setEnabled(true);
+        mode.name->setText(name);
+        sharedSourceLabel = QStringLiteral("%1 · %2").arg(mode.label, name);
+        status->setText(waitingForSharedSource());
+        video.openShared(std::move(receiver), &mode == &sharedMode, std::move(firstFrame));
+    }
+
+    void publishFrame(const QImage &source, const QRect &area, const QJsonObject &result)
+    {
+        if (!syphonOutput && !omtOutput) return;
+        QImage output(source.size(), landmarksOnly ? QImage::Format_ARGB32 : QImage::Format_RGB32);
+        if (output.isNull()) return;
+        output.fill(landmarksOnly ? Qt::transparent : Qt::black);
+        {
+            QPainter painter(&output);
+            if (!landmarksOnly) painter.drawImage(QPoint(), source);
+            drawTrackingOverlay(painter, QRectF(area), result, false);
+        }
+        const auto fps = inferenceRate > 0 ? inferenceRate : frameRate > 0 ? frameRate : 30.0;
+        if (syphonOutput) syphonOutput->publish(output, fps);
+        if (omtOutput) omtOutput->publish(output, fps);
+    }
+
     void receiveFrame(QImage frame)
     {
         if (frame.isNull()) return;
+        if (sourceSize.isEmpty() && !sharedSourceLabel.isEmpty() && status->text() == waitingForSharedSource())
+            status->setText(receivingSharedSource());
+        if (frameRateClock.isValid())
+            ++frameCount;
+        else
+            frameRateClock.start();
         latest = std::move(frame);
         if (latest.size() != sourceSize) {
             sourceSize = latest.size();
@@ -709,7 +889,8 @@ private:
     void updateSizeLabel()
     {
         if (sourceSize.isEmpty()) { resolution->setText("No video frame"); return; }
-        auto text = QStringLiteral("Source %1 × %2 px").arg(sourceSize.width()).arg(sourceSize.height());
+        const auto fps = frameRate >= 0 ? QString::number(frameRate, 'f', 1) : QStringLiteral("—");
+        auto text = QStringLiteral("%1 × %2 px  ·  %3 fps").arg(sourceSize.width()).arg(sourceSize.height()).arg(fps);
         if (!analysedSize.isEmpty()) {
             const auto share = 100.0 * analysedSize.width() * analysedSize.height()
                              / (double(sourceSize.width()) * sourceSize.height());
@@ -721,15 +902,37 @@ private:
         resolution->setText(text);
     }
 
+    QString waitingForSharedSource() const
+    {
+        return QStringLiteral("Waiting for %1").arg(sharedSourceLabel);
+    }
+
+    QString receivingSharedSource() const
+    {
+        return QStringLiteral("Receiving %1").arg(sharedSourceLabel);
+    }
+
     void stopSource()
     {
         video.stop();
+        if (pendingStream) pendingStream->name->setText("Select a running sender");
+        pendingStream = nullptr;
+        candidates.clear();
+        discoveryClock.invalidate();
+        if (!sharedSourceLabel.isEmpty()) {
+            if (status->text() == waitingForSharedSource() || status->text() == receivingSharedSource())
+                status->setText("Ready");
+            sharedSourceLabel.clear();
+        }
         stopButton->setEnabled(false);
         latest = {};
         active = false;
         sourceSize = analysedSize = {};
         updateSizeLabel();
-        telemetry->setText("Waiting for input");
+        telemetry->setText(mediapipe.isReady() ? QStringLiteral("Waiting for input") : analysisStatus);
+        frameRateClock.invalidate();
+        frameRate = -1;
+        frameCount = 0;
         inferenceClock.invalidate();
         inferenceRate = 0;
         inferenceFrames = 0;
@@ -769,6 +972,16 @@ private:
     QSplitter *split;
     VideoPreview *picture;
     QLabel *status, *hint;
+    QString sharedSourceLabel;
+    QString analysisStatus = QStringLiteral("Starting MediaPipe…");
+    StreamMode sharedMode, omtMode;
+    StreamMode *pendingStream = nullptr;
+    std::vector<StreamCandidate> candidates;
+    QElapsedTimer discoveryClock, frameRateClock;
+    double frameRate = -1;
+    int frameCount = 0;
+    std::unique_ptr<VideoOutput> syphonOutput, omtOutput;
+    bool landmarksOnly = false;
     QAction *filtersAction;
     VideoInput video;
     MediaPipeClient mediapipe;

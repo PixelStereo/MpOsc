@@ -12,7 +12,7 @@ set(PXS_BUILD_TESTS OFF)
 add_subdirectory(third_party/pxs-qt EXCLUDE_FROM_ALL)
 qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
     src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
-    src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
+    src/engine/OmtVideo.cpp src/engine/Destinations.cpp src/engine/MediaPipeClient.cpp src/engine/MediaPipeClient.h
     src/engine/MediaPipeRuntime.cpp src/engine/SignalFilters.cpp src/engine/SignalFilters.h src/engine/Signals.cpp src/engine/VideoInput.cpp src/engine/VideoInput.h
     src/ui/About.cpp src/ui/About.h src/ui/HoverHints.cpp src/ui/HoverHints.h src/ui/SignalPanel.cpp src/ui/SignalPanel.h src/ui/SignalWidgets.h
     src/ui/Theme.cpp src/ui/TrackingOverlay.cpp
@@ -57,8 +57,9 @@ if(APPLE)
                            $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
     target_link_libraries(mposc_syphon PUBLIC "-framework Cocoa" "-framework OpenGL"
                           "-framework IOSurface" "-framework Metal")
-    target_sources(MpOsc PRIVATE src/engine/SyphonInput.mm)
-    set_source_files_properties(src/engine/SyphonInput.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(MpOsc PRIVATE src/engine/SyphonInput.mm src/engine/SyphonOutput.mm)
+    set_source_files_properties(src/engine/SyphonInput.mm src/engine/SyphonOutput.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_compile_definitions(MpOsc PRIVATE GL_SILENCE_DEPRECATION)
     target_link_libraries(MpOsc PRIVATE mposc_syphon)
 elseif(WIN32)
     set(spout_sdk "${CMAKE_CURRENT_SOURCE_DIR}/third_party/spout2/SPOUTSDK")

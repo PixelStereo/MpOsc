@@ -62,11 +62,13 @@ void VideoInput::openFile(const QString &path)
     player.play();
 }
 
-void VideoInput::openShared(std::unique_ptr<SharedInput> receiver)
+void VideoInput::openShared(std::unique_ptr<SharedInput> receiver, bool allowFlip, QImage firstFrame)
 {
     stop();
     shared = std::move(receiver);
     current = Source::Shared;
+    flipAllowed = allowFlip;
+    receiveSharedFrame(std::move(firstFrame));
 }
 
 void VideoInput::stop()
@@ -79,20 +81,24 @@ void VideoInput::stop()
 
 void VideoInput::poll()
 {
-    if (!shared) return;
-    auto frame = shared->frame();
-    if (flip && !frame.isNull()) {
+    if (shared) receiveSharedFrame(shared->frame());
+}
+
+void VideoInput::receiveSharedFrame(QImage frame)
+{
+    if (frame.isNull()) return;
+    if (flip && flipAllowed) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
         frame.flip(Qt::Vertical);
 #else
         frame = frame.mirrored(false, true);
 #endif
     }
-    if (!frame.isNull()) emit frameReady(frame);
+    emit frameReady(frame);
 }
 
 void VideoInput::setSharedFlip(bool enabled)
 {
     flip = enabled;
-    if (current == Source::Shared) emit sourceReset();
+    if (current == Source::Shared && flipAllowed) emit sourceReset();
 }

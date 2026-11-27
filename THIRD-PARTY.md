@@ -13,3 +13,7 @@ Google model URLs and verifies each model against its SHA-256 before bundling it
 The macOS release includes [Syphon](https://github.com/Syphon/Syphon-Framework)
 and the Windows release includes [Spout2](https://github.com/leadedge/Spout2).
 Both SDKs are built from the pinned Git submodules and ship with their licenses.
+
+The macOS and Windows packages include libomt and libvmx from the
+[Open Media Transport SDK release](https://github.com/openmediatransport/libomtnet/releases/tag/v1.0.0.19)
+under the MIT license. The SDK license accompanies the binaries.

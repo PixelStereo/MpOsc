@@ -46,30 +46,39 @@ if [[ "$platform" == Darwin ]]; then
     app="$build_dir/$app_name.app"
     [[ -d "$app" ]] || app="$build_dir/$config/$app_name.app"
     runtime="$app/Contents/Resources/mediapipe"
-    runtime_python="$runtime/python/bin/python3.11"
+    runtime_python_path="python/bin/python3.11"
 else
     app="$build_dir/$config/$app_name.exe"
     [[ -f "$app" ]] || app="$build_dir/$app_name.exe"
     runtime="$(dirname "$app")/mediapipe"
-    runtime_python="$runtime/python/python.exe"
+    runtime_python_path="python/python.exe"
 fi
 
+python_cmd="${MPOSC_PYTHON:-python3}"
 cache="$build_dir/mediapipe-runtime"
 if [[ ! -d "$cache" && "$platform" == Darwin && -d "$build_dir/MP_OSC.app/Contents/Resources/mediapipe/python" ]]; then
     cp -R "$build_dir/MP_OSC.app/Contents/Resources/mediapipe" "$cache"
 fi
-if [[ ! -f "$runtime_python" || ! -f "$runtime/face_landmarker.task" ||
-      ! -f "$runtime/gesture_recognizer.task" || ! -f "$runtime/pose_landmarker_lite.task" ]]; then
-    if [[ ! -f "$cache/face_landmarker.task" || ! -f "$cache/gesture_recognizer.task" ||
-          ! -f "$cache/pose_landmarker_lite.task" || ! -d "$cache/python" ]]; then
-        python_cmd="${MPOSC_PYTHON:-python3}"
-        if ! "$python_cmd" -m uv --version >/dev/null 2>&1; then
-            echo "Install uv==0.9.28 or set MPOSC_PYTHON to a Python with uv installed." >&2
-            exit 1
+complete_mediapipe_runtime() {
+    local directory="$1"
+    [[ -x "$directory/$runtime_python_path" && -s "$directory/face_landmarker.task" &&
+       -s "$directory/gesture_recognizer.task" && -s "$directory/pose_landmarker_lite.task" ]]
+}
+if ! complete_mediapipe_runtime "$runtime"; then
+    if ! complete_mediapipe_runtime "$cache"; then
+        uv_python="$python_cmd"
+        if ! "$uv_python" -m uv --version >/dev/null 2>&1; then
+            setup_env="$build_dir/mposc-setup"
+            uv_python="$setup_env/bin/python"
+            if [[ "$platform" != Darwin ]]; then uv_python="$setup_env/Scripts/python.exe"; fi
+            if ! "$uv_python" -m uv --version >/dev/null 2>&1; then
+                "$python_cmd" -m venv "$setup_env"
+                "$uv_python" -m pip install uv==0.9.28
+            fi
         fi
         scratch=$(mktemp -d "$build_dir/mediapipe.XXXXXX")
         trap 'rm -rf "$scratch"' EXIT
-        "$python_cmd" scripts/setup_mediapipe.py --bundle --directory "$scratch/runtime"
+        "$uv_python" scripts/setup_mediapipe.py --bundle --directory "$scratch/runtime"
         rm -rf "$cache"
         mv "$scratch/runtime" "$cache"
     fi
@@ -86,9 +95,22 @@ if [[ ! -f "$runtime_python" || ! -f "$runtime/face_landmarker.task" ||
     fi
 fi
 
+if [[ "$platform" == Darwin ]]; then
+    executable="$app/Contents/MacOS/$app_name"
+    omt_folder="$app/Contents/Frameworks"
+else
+    executable="$app"
+    omt_folder="$(dirname "$app")"
+fi
+"$python_cmd" scripts/setup_omt.py "$omt_folder" --cache "$build_dir/omt-cache"
+
 if [[ "$run" == 1 ]]; then
+    if ! NYXMAP_MEDIAPIPE_DELEGATE=cpu "$executable" --check-mediapipe; then
+        echo "The built app could not run MediaPipe. See the diagnostic above." >&2
+        exit 1
+    fi
     if [[ "$platform" == Darwin ]]; then
-        open "$app"
+        open -n "$app"
     else
         "$app" &
     fi

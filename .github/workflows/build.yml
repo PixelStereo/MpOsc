@@ -63,6 +63,7 @@ jobs:
           test -f "$app/Contents/PlugIns/platforms/libqcocoa.dylib"
           python -m pip install uv==0.9.28
           python scripts/setup_mediapipe.py --bundle --directory "$app/Contents/Resources/mediapipe"
+          python scripts/setup_omt.py "$app/Contents/Frameworks" --cache build/omt-cache
           cp LICENSE THIRD-PARTY.md "$app/Contents/Resources/"
           cp third_party/syphon/License.txt "$app/Contents/Resources/Syphon-LICENSE.txt"
           while IFS= read -r -d '' path; do
@@ -93,6 +94,8 @@ jobs:
           python -m pip install uv==0.9.28
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python scripts/setup_mediapipe.py --bundle --directory dist/package/mediapipe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/setup_omt.py dist/package --cache build/omt-cache
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Copy-Item LICENSE, THIRD-PARTY.md dist/package/
           Copy-Item third_party/spout2/LICENSE dist/package/Spout2-LICENSE.txt

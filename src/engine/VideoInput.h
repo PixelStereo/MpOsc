@@ -23,7 +23,7 @@ public:
     // pixelLimit: the largest camera format to request, in pixels (0 = no limit). False when the device is unknown.
     bool startCamera(const QByteArray &deviceId, qint64 pixelLimit);
     void openFile(const QString &path);
-    void openShared(std::unique_ptr<SharedInput> receiver);
+    void openShared(std::unique_ptr<SharedInput> receiver, bool allowFlip, QImage firstFrame);
     void stop();
 
     // Shared senders are polled rather than pushed: call this at the pace frames are wanted.
@@ -45,5 +45,6 @@ private:
     std::unique_ptr<QCamera> camera;
     std::unique_ptr<SharedInput> shared;
     Source current = Source::None;
-    bool flip = false;
+    void receiveSharedFrame(QImage frame);
+    bool flip = false, flipAllowed = false;
 };

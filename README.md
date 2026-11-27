@@ -2,7 +2,7 @@
 
 <h1 align="center">MpOsc</h1>
 
-**Turn movement into live OSC.** Use a camera, a video, Syphon on macOS or Spout on Windows to play your visuals, sound and lighting with your face, hands and body. Tracking runs on your machine.
+**Turn movement into live OSC.** Use a camera, a video, OMT, Syphon on macOS or Spout on Windows to play your visuals, sound and lighting with your face, hands and body. Tracking runs on your machine.
 
 <!-- release-downloads:start -->
 **LATEST VERSION · [v0.3.4](https://github.com/PixelStereo/MpOsc/releases/tag/v0.3.4)**
@@ -13,6 +13,10 @@
 On an **Apple Silicon Mac**, unzip and move MpOsc to Applications. On **Windows x64**, run the installer and launch MpOsc from the Start menu.
 
 Choose a video source, enter your OSC destinations, click the signals you want, then turn on **Send OSC**. Select a signal and press **Cmd+M** (**Ctrl+M** on Windows) to shape it with a chain of filters: each filter has its own bar under it, and the signal as it comes in sits above them, so you see what every step does. In the table, the bar is the signal and the amber line under it is what gets sent. Hover anything to read what it does, at the bottom right.
+
+Selecting **OMT**, **Syphon**, or **Spout** connects to the first sender that delivers a frame. Use **Choose sender…** to switch streams. The preview shows the source resolution and measured input FPS.
+
+Under **Video Output**, enable **OMT** or **Syphon** (macOS) to publish **MpOsc Landmarks**. Choose **Image + landmarks** for annotated video or **Landmarks only** for a transparent overlay.
 
 Save your setup as a `.mposc` file to recall your settings later.
 
@@ -38,7 +42,7 @@ MpOsc is an OSCQuery device like every other Pixel Stereo application: it announ
 
 Writing an address does exactly what a click does.
 
-<sub>Built by Pixel Stereo. Building from source? Initialize SDKs with <code>git submodule update --init --recursive</code>, then run <code>./build.sh</code>. Requires Qt 6, CMake, a C++17 compiler, and Python with <code>uv==0.9.28</code>.</sub>
+<sub>Built by Pixel Stereo. Building from source? Initialize SDKs with <code>git submodule update --init --recursive</code>, then run <code>./build.sh</code>. Requires Qt 6, CMake, a C++17 compiler, and Python. The script prepares MediaPipe and OMT, checks inference, and opens MpOsc. Use <code>--no-run</code> to prepare the build without opening it.</sub>
 
 ## License
 

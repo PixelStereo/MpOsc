@@ -18,3 +18,7 @@ public:
 
 QList<SharedSender> sharedSenders();
 std::unique_ptr<SharedInput> openSharedSender(const QString &id);
+
+bool omtAvailable();
+QList<SharedSender> omtSenders();
+std::unique_ptr<SharedInput> openOmtSender(const QString &id);

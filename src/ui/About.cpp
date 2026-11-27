@@ -23,6 +23,7 @@ const Credit credits[] = {
 #ifdef Q_OS_WIN
     {"Spout2", "https://github.com/leadedge/Spout2", "BSD-2-Clause — video sharing between Windows apps"},
 #endif
+    {"Open Media Transport", "https://www.openmediatransport.org", "MIT — network video input and output"},
     {"NyxMap", "https://github.com/PixelStereo/NyxMap", "AGPL-3.0 — the OSC codec and tracking worker come from it"},
 };
 } // namespace

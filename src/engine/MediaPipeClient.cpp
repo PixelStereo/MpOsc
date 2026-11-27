@@ -3,6 +3,7 @@
 #include "MediaPipeRuntime.h"
 #include "Worker.h"
 
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcessEnvironment>
 #include <QTimer>
@@ -24,7 +25,10 @@ MediaPipeClient::MediaPipeClient(QObject *parent) : QObject(parent)
             emit resultReady(result);
         }
     });
-    connect(&worker, &QProcess::errorOccurred, this, [this] { emit statusChanged(worker.errorString(), {}); });
+    connect(&worker, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            emit statusChanged("MediaPipe could not start", worker.errorString());
+    });
     connect(&worker, &QProcess::readyReadStandardError, this, [this] {
         log = (log + worker.readAllStandardError()).right(4096);
     });
@@ -47,13 +51,18 @@ MediaPipeClient::~MediaPipeClient() { shutdown(); }
 
 void MediaPipeClient::start()
 {
+    const auto root = runtimeFolder();
+    const auto python = pythonExecutable(root);
+    if (!QFileInfo(python).isExecutable()) {
+        emit statusChanged("MediaPipe runtime missing", python);
+        return;
+    }
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.insert("MPLBACKEND", "Agg");
     if (retried || !environment.contains("NYXMAP_MEDIAPIPE_DELEGATE"))
         environment.insert("NYXMAP_MEDIAPIPE_DELEGATE", "cpu");
     worker.setProcessEnvironment(environment);
-    const auto root = runtimeFolder();
-    worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
+    worker.start(python, {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
 }
 
 void MediaPipeClient::shutdown()

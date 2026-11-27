@@ -19,15 +19,24 @@ int runSelfTest()
     const auto root = runtimeFolder();
     QProcess worker;
     worker.start(pythonExecutable(root), {"-I", "-u", "-c", QString::fromUtf8(workerScript), root});
-    if (!worker.waitForStarted()) return 1;
+    if (!worker.waitForStarted()) {
+        qCritical().noquote() << "Cannot start the bundled MediaPipe interpreter:" << worker.program() << worker.errorString();
+        return 1;
+    }
     const QByteArray pixels(128 * 128 * 4, '\0');
     worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
     worker.write(QByteArray("128 128 14 40 60 1 0\n") + pixels);
     worker.write(QByteArray("128 128 14 50 50 2 1\n") + pixels);
     worker.closeWriteChannel();
-    if (!worker.waitForFinished(60000)) return 2;
+    if (!worker.waitForFinished(60000)) {
+        qCritical().noquote() << "MediaPipe self-test did not finish:" << worker.errorString();
+        return 2;
+    }
     const auto lines = worker.readAllStandardOutput().trimmed().split('\n');
-    if (lines.size() != 4 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) return 3;
+    if (lines.size() != 4 || !QJsonDocument::fromJson(lines[0]).object().value("ready").toBool()) {
+        qCritical().noquote() << "Unexpected MediaPipe startup reply:" << lines.join('\n') << worker.readAllStandardError();
+        return 3;
+    }
     const auto frame = QJsonDocument::fromJson(lines[1]).object();
     if (!frame.contains("face") || !frame.contains("hands") || !frame.contains("pose")) {
         qCritical().noquote() << lines[1];
