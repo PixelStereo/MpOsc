@@ -169,17 +169,17 @@ private slots:
             return shown;
         };
         QCOMPARE(bars().size(), 1);
-        panel.setChainOf("/face/jawOpen", slowChain());
-        QCOMPARE(bars().size(), 2); // the signal as it comes in, then the signal after the filters
-        for (int i = 0; i < 40; ++i) {
-            panel.update(frame(i < 5 ? 0.0 : 1.0), "127.0.0.1:9", false);
-            QTest::qWait(8);
-        }
+        auto gain = InteractionStage::made(InteractionFilter::Math);
+        gain.op = MathOp::Multiply;
+        gain.a = 0.5;
+        panel.setChainOf("/face/jawOpen", {gain});
+        panel.update(frame(1.0), "127.0.0.1:9", false);
         const auto all = bars();
-        // The top one is the signal itself; the one after the filters is what they make of it: the slow smoothing is behind, the signal is not
-        QCOMPARE(all.first()->format(), QString("1.000"));
-        QVERIFY(all[1]->value() < all.first()->value());
-        QVERIFY(all[1]->format() != all.first()->format());
+        QCOMPARE(all.size(), 2);
+        QCOMPARE(all[0]->format(), QString("1.000"));
+        QCOMPARE(all[0]->value(), 1000);
+        QCOMPARE(all[1]->format(), QString("0.500"));
+        QCOMPARE(all[1]->value(), 500);
     }
 
     void theTableKeepsTheSignalAndShowsTheFilteredOne()
