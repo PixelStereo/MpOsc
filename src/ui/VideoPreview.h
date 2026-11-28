@@ -15,6 +15,7 @@ class VideoPreview final : public QWidget
 public:
     using QWidget::QWidget;
     QRectF roi{0, 0, 1, 1};
+    TrackingOverlayOptions overlayOptions;
     bool editRoi = false, mirror = false, showLandmarks = true;
     bool isDrawing() const { return dragging; }
     void showFrame(const QImage &frame, const QJsonObject &tracking = {}, const QRectF &trackedArea = {})
@@ -46,7 +47,7 @@ protected:
         painter.restore();
 
         if (showLandmarks && !inferenceRegion.isEmpty())
-            drawTrackingOverlay(painter, toPreview(inferenceRegion, area), result, mirror);
+            drawTrackingOverlay(painter, toPreview(inferenceRegion, area), result, mirror, overlayOptions);
         if (editRoi || roi != QRectF(0, 0, 1, 1)) {
             const auto selection = toPreview(roi, area);
             QPainterPath shade;

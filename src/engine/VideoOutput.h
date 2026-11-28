@@ -14,4 +14,6 @@ public:
 std::unique_ptr<VideoOutput> openOmtOutput(const QString &name);
 #ifdef Q_OS_MACOS
 std::unique_ptr<VideoOutput> openSyphonOutput(const QString &name);
+#elif defined(Q_OS_WIN)
+std::unique_ptr<VideoOutput> openSpoutOutput(const QString &name);
 #endif

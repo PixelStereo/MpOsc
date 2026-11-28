@@ -75,7 +75,7 @@ elseif(WIN32)
     target_include_directories(mposc_spout PUBLIC "${spout_dx}" "${spout_gl}")
     target_compile_definitions(mposc_spout PUBLIC SPOUT_BUILD_STATIC NOMINMAX)
     target_link_libraries(mposc_spout PUBLIC opengl32 d3d9 d3d11 dxgi version winmm shlwapi)
-    target_sources(MpOsc PRIVATE src/engine/SpoutInput.cpp)
+    target_sources(MpOsc PRIVATE src/engine/SpoutInput.cpp src/engine/SpoutOutput.cpp)
     target_link_libraries(MpOsc PRIVATE mposc_spout)
 endif()
 
