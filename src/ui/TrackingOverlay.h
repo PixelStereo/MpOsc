@@ -13,6 +13,7 @@ struct TrackingOverlayOptions {
     int strokeScale = 100;
     int pointScale = 100;
     bool handLabels = true;
+    bool handConfidence = true;
 };
 
 void drawTrackingOverlay(QPainter &painter, const QRectF &area, const QJsonObject &result, bool mirror,

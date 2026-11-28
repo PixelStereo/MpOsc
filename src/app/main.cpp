@@ -509,6 +509,7 @@ public:
         for (const auto &[key, field] : previewFields) settings.setValue(key, field->value());
         settings.setValue("overlay/hands", landmarkHands->currentIndex());
         settings.setValue("overlay/handLabels", landmarkLabels->isChecked());
+        settings.setValue("overlay/handConfidence", landmarkConfidence->isChecked());
         settings.setValue("osc/send", send->isChecked());
         settings.setValue("destinations", destinations->text());
     }
@@ -576,13 +577,18 @@ private:
         percentField(form, "Min. pose visibility", "overlay/poseVisibility", options.poseVisibility);
         percentField(form, "Line thickness", "overlay/strokeScale", options.strokeScale, 10, 400);
         percentField(form, "Point size", "overlay/pointScale", options.pointScale, 0, 400);
-        landmarkLabels = new QCheckBox("Show hand labels and confidence");
-        landmarkLabels->setChecked(options.handLabels);
-        form->addRow(landmarkLabels);
-        connect(landmarkLabels, &QCheckBox::toggled, this, [&options, this](bool shown) {
-            options.handLabels = shown;
-            picture->update();
-        });
+        const auto addToggle = [&](const QString &label, bool &value) {
+            auto *toggle = new QCheckBox(label);
+            toggle->setChecked(value);
+            form->addRow(toggle);
+            connect(toggle, &QCheckBox::toggled, this, [this, &value](bool shown) {
+                value = shown;
+                picture->update();
+            });
+            return toggle;
+        };
+        landmarkLabels = addToggle("Show Left / Right labels", options.handLabels);
+        landmarkConfidence = addToggle("Show confidence percentage", options.handConfidence);
         return button;
     }
 
@@ -617,6 +623,7 @@ private:
             field->setValue(settings.value(key, field->property("defaultValue")).toInt());
         landmarkHands->setCurrentIndex(qBound(0, settings.value("overlay/hands", 0).toInt(), landmarkHands->count() - 1));
         landmarkLabels->setChecked(settings.value("overlay/handLabels", true).toBool());
+        landmarkConfidence->setChecked(settings.value("overlay/handConfidence", true).toBool());
     }
 
     // What the interface has is reachable like every other Pixel Stereo application: OSC and OSCQuery, each parameter
@@ -1079,7 +1086,7 @@ private:
     Output sharedOutput, omtOutput;
     std::vector<std::pair<QString, QSpinBox *>> previewFields;
     QComboBox *landmarkHands;
-    QCheckBox *landmarkLabels;
+    QCheckBox *landmarkLabels, *landmarkConfidence;
     QAction *filtersAction;
     VideoInput video;
     MediaPipeClient mediapipe;

@@ -78,7 +78,8 @@ void drawFace(QPainter &p, const Landmarks &face)
     face.dots(p, {468,473}, eyes, 2.4);
 }
 
-void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, const QRectF &area, bool showLabel)
+void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, const QRectF &area,
+              const TrackingOverlayOptions &options)
 {
     const QColor thumb("#ff8197"), index("#ffc16b"), middle("#82edaa"), ring("#5dd9ff"), pinkie("#c6a3ff");
     hand.chain(p, {0,5,9,13,17,0}, white, 1.65);
@@ -94,12 +95,16 @@ void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, 
     hand.dots(p, {17,18,19,20}, pinkie, 2.6);
     hand.dots(p, {0}, white, 3.2);
 
-    if (!showLabel) return;
+    if (!options.handLabels && !options.handConfidence) return;
     const auto wrist = hand.point(0);
     if (!wrist || !area.contains(*wrist)) return;
     const bool isRight = detection.value("right").toBool();
-    const auto text = QStringLiteral("%1  %2%").arg(isRight ? "Right" : "Left")
-                          .arg(qRound(detection.value("score").toDouble() * 100));
+    QString text;
+    if (options.handLabels) text = isRight ? "Right" : "Left";
+    if (options.handConfidence) {
+        if (!text.isEmpty()) text += "  ";
+        text += QString::number(qRound(detection.value("score").toDouble() * 100)) + '%';
+    }
     const qreal width = p.fontMetrics().horizontalAdvance(text) + 13;
     if (width > area.width() || area.height() < 21) return;
     const qreal x = wrist->x() + 8 + width < area.right() ? wrist->x() + 8 : wrist->x() - width - 8;
@@ -139,7 +144,7 @@ void drawTrackingOverlay(QPainter &painter, const QRectF &area, const QJsonObjec
         const auto side = hand.value("right").toBool() ? TrackingOverlayOptions::Right : TrackingOverlayOptions::Left;
         if (options.hands != TrackingOverlayOptions::Both && options.hands != side) continue;
         if (hand.value("score").toDouble() < options.confidence / 100.0) continue;
-        drawHand(painter, Landmarks(hand, area, mirror, options), hand, area, options.handLabels);
+        drawHand(painter, Landmarks(hand, area, mirror, options), hand, area, options);
     }
     painter.restore();
 }
