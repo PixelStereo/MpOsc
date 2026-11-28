@@ -1,10 +1,13 @@
 #include <pxs/FilterEditor.h>
 #include "HoverHints.h"
+#include "OscCodec.h"
 #include "SignalFilters.h"
 #include "SignalPanel.h"
 #include "Theme.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QNetworkDatagram>
 #include <QJsonObject>
 #include <QCheckBox>
 #include <QDragEnterEvent>
@@ -212,6 +215,37 @@ private slots:
             }
             panel.grab().save(qEnvironmentVariable("MPOSC_SHOT"));
         }
+    }
+
+    void aSignalCanDriveTheSelectedDeviceAddress()
+    {
+        QUdpSocket receiver;
+        QVERIFY(receiver.bind(QHostAddress::LocalHost, 0));
+        pxs::devices::Device mixer;
+        mixer.kind = pxs::devices::Kind::Osc;
+        mixer.name = "Mixer";
+        mixer.host = "127.0.0.1";
+        mixer.port = receiver.localPort();
+        pxs::devices::Address fader;
+        fader.path = "/strip/1/fader";
+        mixer.addresses = {fader};
+        pxs::devices::Devices devices;
+        const auto id = devices.add(mixer);
+        QVERIFY(id);
+        QSettings settings;
+        settings.setValue("devices/registry", QJsonDocument(devices.toJson()).toJson(QJsonDocument::Compact));
+        settings.setValue("signals/face/jawOpen/send", true);
+        settings.setValue("signals/face/jawOpen/targetDevice", id);
+        settings.setValue("signals/face/jawOpen/targetPath", QStringLiteral("/strip/1/fader"));
+
+        SignalPanel panel;
+        panel.update(frame(0.75), QStringLiteral("invalid global OSC destination"), true);
+        QTRY_VERIFY_WITH_TIMEOUT(receiver.hasPendingDatagrams(), 1000);
+        std::vector<osc::Message> messages;
+        osc::decode(receiver.receiveDatagram().data(), messages);
+        QCOMPARE(messages.size(), size_t(1));
+        QCOMPARE(messages.front().address, QStringLiteral("/strip/1/fader"));
+        QCOMPARE(messages.front().args.front().toDouble(), 0.75);
     }
 
     void whatAControlIsForIsSaidInTheStatusBar()

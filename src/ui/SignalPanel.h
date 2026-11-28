@@ -1,6 +1,8 @@
 #pragma once
 
 #include "SignalFilters.h"
+#include <pxs/Devices.h>
+#include <pxs/DmxOut.h>
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -25,12 +27,13 @@ class SignalMeter;
 // the OSC output of what the chains give.
 class SignalPanel : public QWidget {
 public:
-    explicit SignalPanel(QWidget *parent = nullptr);
+    explicit SignalPanel(QWidget *parent = nullptr, const QString &deviceName = QStringLiteral("MpOsc"));
 
     QString filter() const;
     void setFilter(const QString &text);
     // Rows saved in the settings are created even before a signal first appears.
     void restoreRows(const QSettings &settings);
+    void restoreDevices(const QSettings &settings);
     void clear();
     // Whether OSC is armed: meters of enabled signals light up accordingly.
     void setSending(bool enabled);
@@ -59,6 +62,9 @@ private:
         QCheckBox *send = nullptr;
         SignalFilter filter;
         bool pinned = false, initialized = false, sent = false;
+        bool deviceSent = false;
+        quint64 device = 0;
+        QString target;
         int level = 0;
         QString raw = QStringLiteral("—"), shown = QStringLiteral("—");
     };
@@ -75,6 +81,14 @@ private:
     void showBadge(Row &row);
     void familyMenu(const QString &family, const QPoint &globalPosition);
 
+    void showDevices();
+    void signalTargetMenu(const QString &address, const QPoint &position);
+    void updateDeviceReferences();
+    void submitDmx();
+
+    pxs::devices::Devices devices;
+    pxs::dmx::Sender dmx;
+    std::vector<pxs::dmx::Output> dmxOutputs;
     QLineEdit *search;
     QTreeWidget *table, *pinnedTable;
     pxs::filterview::FilterEditor *editor;
