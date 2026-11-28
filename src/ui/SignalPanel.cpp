@@ -3,6 +3,13 @@
 #include "Destinations.h"
 #include "OscCodec.h"
 #include <pxs/SignalMeter.h>
+#include <pxs/DeviceTargetMenu.h>
+#include <pxs/DevicesPanel.h>
+#include <pxs/OutputsPanel.h>
+#include <QDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QTabWidget>
 #include "HoverHints.h"
 #include "SignalWidgets.h"
 #include "Signals.h"
@@ -41,8 +48,16 @@ FilterChain adapted(const FilterChain &chain, const QString &address)
 }
 }
 
-SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
+SignalPanel::SignalPanel(QWidget *parent, const QString &deviceName)
+    : QWidget(parent), devices(deviceName)
 {
+    restoreDevices(QSettings());
+    connect(&devices, &pxs::devices::Devices::changed, this, [this] {
+        QSettings().setValue("devices/registry", QJsonDocument(devices.toJson()).toJson(QJsonDocument::Compact));
+    });
+    connect(&devices, &pxs::devices::Devices::dmxChanged, this, &SignalPanel::submitDmx);
+    devices.startDiscovery();
+
     auto *controls = new QVBoxLayout(this);
     search = new QLineEdit;
     search->setPlaceholderText("Filter signals by name");
@@ -52,6 +67,9 @@ SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
     signalActions->addWidget(search, 1);
     signalActions->addWidget(enableAll);
     signalActions->addWidget(disableAll);
+    auto *manageDevices = new QPushButton(QStringLiteral("Devices…"));
+    signalActions->addWidget(manageDevices);
+    connect(manageDevices, &QPushButton::clicked, this, &SignalPanel::showDevices);
     controls->addLayout(signalActions);
     connect(enableAll, &QPushButton::clicked, this, [this] {
         for (auto &row : rows) row.send->setChecked(true);
@@ -94,8 +112,13 @@ SignalPanel::SignalPanel(QWidget *parent) : QWidget(parent)
         });
         connect(view, &QTreeWidget::customContextMenuRequested, this, [this, view](const QPoint &point) {
             auto *item = view->itemAt(point);
-            if (item && !item->parent() && item->childCount() > 0 && view == table)
-                familyMenu(item->data(0, Qt::UserRole).toString(), view->viewport()->mapToGlobal(point));
+            if (!item) return;
+            const auto address = item->data(0, Qt::UserRole).toString();
+            const auto position = view->viewport()->mapToGlobal(point);
+            if (!item->parent() && item->childCount() > 0 && view == table)
+                familyMenu(address, position);
+            else if (rows.contains(address))
+                signalTargetMenu(address, position);
         });
         return view;
     };
@@ -144,20 +167,20 @@ void SignalPanel::setSending(bool enabled)
 {
     sending = enabled;
     for (auto &row : rows) {
-        row.sent = false;
+        row.sent = row.deviceSent = false;
         row.meter->setEnabled(sending && row.send->isChecked());
     }
 }
 
 void SignalPanel::resetSent()
 {
-    for (auto &row : rows) row.sent = false;
+    for (auto &row : rows) row.sent = row.deviceSent = false;
 }
 
 void SignalPanel::resetValues()
 {
     for (auto &row : rows) {
-        row.initialized = row.sent = false;
+        row.initialized = row.sent = row.deviceSent = false;
         row.filter.reset();
     }
 }
@@ -302,7 +325,8 @@ void SignalPanel::buildItem(const QString &address, Row &row)
 
     auto *send = new QCheckBox;
     send->setAccessibleName("Send " + address);
-    send->setToolTip("Send this signal to the OSC destinations");
+    send->setToolTip(row.device ? QStringLiteral("Send to %1 › %2").arg(devices.nameOf(row.device), row.target)
+                                : QStringLiteral("Send to the OSC destinations. Right-click the signal to choose a device."));
     send->setChecked(QSettings().value(key + "/send", false).toBool());
     auto *sendCell = new QWidget;
     auto *sendLayout = new QHBoxLayout(sendCell);
@@ -313,7 +337,7 @@ void SignalPanel::buildItem(const QString &address, Row &row)
     meter->setEnabled(sending && send->isChecked());
     connect(send, &QCheckBox::toggled, this, [this, address, key](bool enabled) {
         auto &r = rows[address];
-        r.sent = false;
+        r.sent = r.deviceSent = false;
         r.meter->setEnabled(sending && enabled);
         QSettings().setValue(key + "/send", enabled);
     });
@@ -327,6 +351,8 @@ SignalPanel::Row SignalPanel::makeRow(const QString &address)
     const auto key = settingsKey(address);
     QSettings settings;
     Row row;
+    row.device = settings.value(key + "/targetDevice").toULongLong();
+    row.target = settings.value(key + "/targetPath").toString();
     row.pinned = settings.value(key + "/pinned", false).toBool();
     row.filter.setChain(chainFromText(settings.value(key + "/filters").toString()));
     buildItem(address, row);
@@ -415,6 +441,86 @@ void SignalPanel::familyMenu(const QString &family, const QPoint &globalPosition
     menu.exec(globalPosition);
 }
 
+void SignalPanel::restoreDevices(const QSettings &settings)
+{
+    dmxOutputs.clear();
+    const auto outputs = QJsonDocument::fromJson(settings.value("devices/dmx").toByteArray()).array();
+    for (const auto &entry : outputs) dmxOutputs.push_back(pxs::dmx::Output::fromJson(entry.toObject()));
+    devices.fromJson(QJsonDocument::fromJson(settings.value("devices/registry").toByteArray()).object());
+    updateDeviceReferences();
+    submitDmx();
+}
+
+void SignalPanel::submitDmx()
+{
+    dmx.follow(dmxOutputs);
+    dmx.submit(pxs::dmx::route(devices.dmxUniverses(), dmxOutputs));
+}
+
+void SignalPanel::showDevices()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Devices"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *tabs = new QTabWidget;
+    tabs->addTab(new pxs::devices::DevicesPanel(&devices), QStringLiteral("Devices"));
+    auto *outputs = new pxs::dmx::OutputsPanel;
+    outputs->setMappingShown(true);
+    outputs->setDefaultSourceName(QStringLiteral("MpOsc"));
+    outputs->setStateSource([this](quint64 id) { return dmx.state(id); });
+    outputs->setOutputs({dmxOutputs.begin(), dmxOutputs.end()});
+    connect(outputs, &pxs::dmx::OutputsPanel::outputsChanged, &dialog, [this](const auto &updated) {
+        dmxOutputs.assign(updated.begin(), updated.end());
+        QJsonArray saved;
+        for (const auto &output : dmxOutputs) saved.append(output.toJson());
+        QSettings().setValue("devices/dmx", QJsonDocument(saved).toJson(QJsonDocument::Compact));
+        submitDmx();
+    });
+    tabs->addTab(outputs, QStringLiteral("DMX Outputs"));
+    layout->addWidget(tabs);
+    dialog.resize(820, 540);
+    dialog.exec();
+}
+
+void SignalPanel::updateDeviceReferences()
+{
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("signals"));
+    std::set<quint64> referenced;
+    for (const auto &key : settings.allKeys()) {
+        if (!key.endsWith(QLatin1String("/targetDevice"))) continue;
+        const quint64 id = settings.value(key).toULongLong();
+        if (id) referenced.insert(id);
+    }
+    devices.setReferencedDevices(std::move(referenced));
+}
+
+void SignalPanel::signalTargetMenu(const QString &address, const QPoint &position)
+{
+    QMenu menu;
+    const auto choose = [this, address](quint64 id, const QString &path) {
+        auto it = rows.find(address);
+        if (it == rows.end()) return;
+        it->device = id;
+        it->target = path;
+        it->sent = it->deviceSent = false;
+        it->send->setToolTip(id ? QStringLiteral("Send to %1 › %2").arg(devices.nameOf(id), path)
+                                : QStringLiteral("Send to the OSC destinations. Right-click the signal to choose a device."));
+        QSettings settings;
+        const auto key = settingsKey(address);
+        settings.setValue(key + "/targetDevice", id);
+        settings.setValue(key + "/targetPath", path);
+        updateDeviceReferences();
+    };
+    const auto &row = rows.value(address);
+    auto *osc = menu.addAction(QStringLiteral("OSC destinations"), this, [choose] { choose(0, {}); });
+    osc->setCheckable(true);
+    osc->setChecked(!row.device);
+    pxs::devices::addDeviceTargets(menu.addMenu(QStringLiteral("Devices")), devices, this,
+        [choose](quint64 id, const ParamInfo &p) { choose(id, p.path); }, row.device, row.target);
+    menu.exec(position);
+}
+
 QString SignalPanel::update(const QJsonObject &frame, const QString &destinations, bool sendEnabled)
 {
     const auto values = signalsFor(frame);
@@ -429,7 +535,7 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
             added = true;
         }
     if (added) applyQuery();
-    int messages = 0, errors = 0;
+    int messages = 0, deviceWrites = 0, errors = 0;
     for (auto i = rows.begin(); i != rows.end(); ++i) {
         const auto &address = i.key();
         const bool available = values.contains(address);
@@ -455,6 +561,19 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
         if (address == selected && editor->isVisible())
             editor->setTrace(available, available ? values.value(address) : 0.0, i->filter.afterEach());
         if (available && signalFired) signalFired(address, signalValue(type, output));
+        if (i->device) {
+            if (!sendEnabled || !i->send->isChecked()) {
+                i->deviceSent = false;
+            } else if (available || i->deviceSent) {
+                if (devices.send(i->device, i->target, available ? output : 0)) {
+                    i->deviceSent = available;
+                    ++deviceWrites;
+                } else {
+                    ++errors;
+                }
+            }
+            continue;
+        }
         if (!armed || !i->send->isChecked()) { i->sent = false; continue; }
         if (!available && !i->sent) continue;
         // A signal that is gone is told once as 0 (off)
@@ -477,6 +596,7 @@ QString SignalPanel::update(const QJsonObject &frame, const QString &destination
                     QString("%1 live signals · %2 OSC datagrams").arg(values.size()).arg(messages);
     for (const auto &key : frame.keys())
         if (key == "error" || key.endsWith("_error")) label += " · " + frame.value(key).toString();
+    if (deviceWrites) label += QStringLiteral(" · %1 device signals").arg(deviceWrites);
     if (errors) label += QString(" · %1 send errors").arg(errors);
     return label;
 }

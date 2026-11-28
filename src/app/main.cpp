@@ -274,7 +274,7 @@ public:
         auto *oscBar = new QHBoxLayout;
         destinations = new QLineEdit(settings.value("destinations", "127.0.0.1:5000").toString());
         destinations->setPlaceholderText("127.0.0.1:5000 10.0.0.2:9999");
-        send = new QPushButton("Send OSC");
+        send = new QPushButton("Send outputs");
         styleToggle(send);
         send->setChecked(settings.value("osc/send", false).toBool());
         oscBar->addWidget(new QLabel("Destinations"));
@@ -342,7 +342,7 @@ public:
         picture->setMinimumWidth(250);
         picture->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
         split->addWidget(previewPanel);
-        signalPanel = new SignalPanel;
+        signalPanel = new SignalPanel(nullptr, QStringLiteral(MPOSC_APP_NAME));
         split->addWidget(signalPanel);
         filtersAction->setChecked(settings.value("window/filters", false).toBool());
         signalPanel->setFiltersShown(filtersAction->isChecked());
@@ -630,7 +630,7 @@ private:
     // going through its own widget, so that writing it from outside does what a click does
     void exposeControls(const QSettings &settings)
     {
-        pxs::bindToggle(tree, "/osc/send", send, "Send the enabled signals to the destinations");
+        pxs::bindToggle(tree, "/osc/send", send, "Send the enabled signals to their selected outputs");
         pxs::bindText(tree, "/osc/destinations", destinations, "host:port entries separated by spaces");
         pxs::bindNumber(tree, "/detection/confidence", minDetection, "Confidence needed to acquire a new subject");
         pxs::bindNumber(tree, "/detection/tracking", minTracking, "Confidence needed to keep tracking between frames");
@@ -666,7 +666,7 @@ private:
     static bool configurationKey(const QString &key)
     {
         return key == "destinations" || key.startsWith("signals/") || key.startsWith("video/") ||
-               key.startsWith("window/") || key.startsWith("osc/");
+               key.startsWith("window/") || key.startsWith("osc/") || key.startsWith("devices/");
     }
 
     void installMenus(QVBoxLayout *layout)
@@ -809,7 +809,7 @@ private:
         }
         stopSource();
         QSettings local;
-        for (const auto &group : {"signals", "video", "window", "osc", "destinations"}) local.remove(group);
+        for (const auto &group : {"signals", "video", "window", "osc", "destinations", "devices"}) local.remove(group);
         for (const auto &key : snapshot.allKeys()) {
             if (configurationKey(key)) local.setValue(key, snapshot.value(key));
         }
@@ -839,6 +839,7 @@ private:
         previewLandmarks->setChecked(local.value("window/landmarks", true).toBool());
         loadDetectionOptions(local);
         loadPreviewOptions(local);
+        signalPanel->restoreDevices(local);
         signalPanel->restoreRows(local);
         rememberConfiguration(path);
         status->setText("Configuration loaded");

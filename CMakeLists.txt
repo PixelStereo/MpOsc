@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 # Shared Pixel Stereo code (the OSC codec), pinned as a submodule
 set(PXS_BUILD_TESTS OFF)
+option(PXS_CORE_BUILD_RTMIDI "Build the bundled native MIDI backend" ON)
 add_subdirectory(third_party/pxs-qt EXCLUDE_FROM_ALL)
 qt_add_executable(MpOsc WIN32 MACOSX_BUNDLE
     src/app/main.cpp src/app/SelfTest.cpp src/app/SelfTest.h
@@ -33,7 +34,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scripts/mediapipe
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/mediapipe_worker.py" WORKER)
 configure_file(src/engine/Worker.h.in generated/Worker.h @ONLY)
 target_include_directories(MpOsc PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets pxs::tree pxs::bind pxs::oscquery pxs::interaction pxs::filterview)
+target_link_libraries(MpOsc PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia pxs::osc pxs::theme pxs::widgets pxs::tree pxs::bind pxs::oscquery pxs::interaction pxs::filterview pxs::devicesview pxs::dmxoutview)
 set_target_properties(MpOsc PROPERTIES OUTPUT_NAME "${MPOSC_APP_NAME}"
     MACOSX_BUNDLE_GUI_IDENTIFIER com.pixelstereo.mp-osc
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in")
@@ -89,7 +90,7 @@ if(MPOSC_TESTS)
         src/ui/HoverHints.cpp src/ui/SignalPanel.cpp src/ui/Theme.cpp)
     set_target_properties(mposc_ui_test PROPERTIES AUTOMOC ON)
     target_include_directories(mposc_ui_test PRIVATE src/engine src/ui)
-    target_link_libraries(mposc_ui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Test pxs::osc pxs::theme pxs::widgets pxs::interaction pxs::filterview)
+    target_link_libraries(mposc_ui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Test pxs::osc pxs::theme pxs::widgets pxs::interaction pxs::filterview pxs::devicesview pxs::dmxoutview)
     add_test(NAME ui COMMAND mposc_ui_test)
     set_tests_properties(ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
