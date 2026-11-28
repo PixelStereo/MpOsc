@@ -13,13 +13,14 @@ const QColor left("#5dd9ff"), right("#ffc16b"), white("#e4edf6");
 
 class Landmarks {
 public:
-    Landmarks(const QJsonObject &detection, QRectF area, bool mirror)
+    Landmarks(const QJsonObject &detection, QRectF area, bool mirror, const TrackingOverlayOptions &options)
         : points(detection.value("points").toArray()), visibility(detection.value("visibility").toArray()),
-          area(area), mirror(mirror) {}
+          area(area), mirror(mirror), options(options) {}
 
     std::optional<QPointF> point(int index) const
     {
-        if (index >= points.size() || (index < visibility.size() && visibility.at(index).toDouble() < .45)) return {};
+        if (index >= points.size()) return {};
+        if (index < visibility.size() && visibility.at(index).toDouble() < options.poseVisibility / 100.0) return {};
         const auto p = points.at(index).toArray();
         if (p.size() < 2 || !p.at(0).isDouble() || !p.at(1).isDouble()) return {};
         const double x = p.at(0).toDouble(), y = p.at(1).toDouble();
@@ -29,6 +30,8 @@ public:
 
     void chain(QPainter &painter, std::initializer_list<int> indices, const QColor &color, qreal width) const
     {
+        const qreal scale = options.strokeScale / 100.0;
+        width *= scale;
         QPainterPath path;
         bool continuous = false;
         for (const int index : indices) {
@@ -38,13 +41,16 @@ public:
             else path.moveTo(*p);
             continuous = true;
         }
-        painter.strokePath(path, QPen(ink, width + 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.strokePath(path, QPen(ink, width + 2 * scale, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter.strokePath(path, QPen(color, width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     }
 
     void dots(QPainter &painter, std::initializer_list<int> indices, const QColor &color, qreal radius) const
     {
-        painter.setPen(QPen(ink, 1.15));
+        if (options.pointScale == 0) return;
+        const qreal scale = options.pointScale / 100.0;
+        radius *= scale;
+        painter.setPen(QPen(ink, 1.15 * scale));
         painter.setBrush(color);
         for (const auto index : indices)
             if (const auto p = point(index)) painter.drawEllipse(*p, radius, radius);
@@ -54,6 +60,7 @@ private:
     QJsonArray points, visibility;
     QRectF area;
     bool mirror;
+    const TrackingOverlayOptions &options;
 };
 
 void drawFace(QPainter &p, const Landmarks &face)
@@ -71,7 +78,7 @@ void drawFace(QPainter &p, const Landmarks &face)
     face.dots(p, {468,473}, eyes, 2.4);
 }
 
-void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, const QRectF &area)
+void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, const QRectF &area, bool showLabel)
 {
     const QColor thumb("#ff8197"), index("#ffc16b"), middle("#82edaa"), ring("#5dd9ff"), pinkie("#c6a3ff");
     hand.chain(p, {0,5,9,13,17,0}, white, 1.65);
@@ -87,6 +94,7 @@ void drawHand(QPainter &p, const Landmarks &hand, const QJsonObject &detection, 
     hand.dots(p, {17,18,19,20}, pinkie, 2.6);
     hand.dots(p, {0}, white, 3.2);
 
+    if (!showLabel) return;
     const auto wrist = hand.point(0);
     if (!wrist || !area.contains(*wrist)) return;
     const bool isRight = detection.value("right").toBool();
@@ -116,18 +124,22 @@ void drawPose(QPainter &p, const Landmarks &pose)
 }
 }
 
-void drawTrackingOverlay(QPainter &painter, const QRectF &area, const QJsonObject &result, bool mirror)
+void drawTrackingOverlay(QPainter &painter, const QRectF &area, const QJsonObject &result, bool mirror,
+                         const TrackingOverlayOptions &options)
 {
     painter.save();
     painter.setClipRect(area, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing);
     for (const auto &value : result.value("pose").toArray())
-        drawPose(painter, Landmarks(value.toObject(), area, mirror));
+        drawPose(painter, Landmarks(value.toObject(), area, mirror, options));
     for (const auto &value : result.value("face").toArray())
-        drawFace(painter, Landmarks(value.toObject(), area, mirror));
+        drawFace(painter, Landmarks(value.toObject(), area, mirror, options));
     for (const auto &value : result.value("hands").toArray()) {
         const auto hand = value.toObject();
-        drawHand(painter, Landmarks(hand, area, mirror), hand, area);
+        const auto side = hand.value("right").toBool() ? TrackingOverlayOptions::Right : TrackingOverlayOptions::Left;
+        if (options.hands != TrackingOverlayOptions::Both && options.hands != side) continue;
+        if (hand.value("score").toDouble() < options.confidence / 100.0) continue;
+        drawHand(painter, Landmarks(hand, area, mirror, options), hand, area, options.handLabels);
     }
     painter.restore();
 }

@@ -281,39 +281,6 @@ public:
         oscBar->addWidget(destinations, 1);
         oscBar->addWidget(send);
         layout->addLayout(oscBar);
-#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-        auto *videoOutput = section("Video Output");
-        auto *composition = new QComboBox;
-        composition->addItem("Image + landmarks");
-        composition->addItem("Landmarks only");
-        videoOutput->addWidget(composition);
-        connect(composition, &QComboBox::currentIndexChanged, this, [this](int index) {
-            landmarksOnly = index == 1;
-        });
-        const auto addOutput = [&](const QString &label, std::unique_ptr<VideoOutput> &output,
-                                   std::unique_ptr<VideoOutput> (*openOutput)(const QString &)) {
-            auto *button = new QPushButton(label);
-            styleToggle(button);
-            videoOutput->addWidget(button);
-            connect(button, &QPushButton::toggled, this, [this, button, label, &output, openOutput](bool on) {
-                if (!on) {
-                    output.reset();
-                    return;
-                }
-                output = openOutput(QStringLiteral("MpOsc Landmarks"));
-                if (output) return;
-                const QSignalBlocker block(button);
-                button->setChecked(false);
-                status->setText(QStringLiteral("Could not start %1 video output").arg(label));
-            });
-        };
-#ifdef Q_OS_MACOS
-        addOutput("Syphon", syphonOutput, openSyphonOutput);
-#endif
-        addOutput("OMT", omtOutput, openOmtOutput);
-        videoOutput->addStretch();
-#endif
-
         split = new QSplitter;
         picture = new VideoPreview;
         const QRectF fullFrame(0, 0, 1, 1);
@@ -345,10 +312,23 @@ public:
         previewTools->addStretch();
         previewTools->addWidget(mirror);
         previewTools->addWidget(overlay);
+        auto *outputTools = new QHBoxLayout;
+        outputTools->addWidget(landmarkSettingsButton());
+        outputTools->addStretch();
+#ifdef Q_OS_MACOS
+        outputTools->addWidget(outputButton("Syphon Output", "syphon", sharedOutput, openSyphonOutput));
+#elif defined(Q_OS_WIN)
+        outputTools->addWidget(outputButton("Spout Output", "spout", sharedOutput, openSpoutOutput));
+#endif
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+        outputTools->addWidget(outputButton("OMT Output", "omt", omtOutput, openOmtOutput));
+#endif
+        loadPreviewOptions(settings);
         resolution = new QLabel("No video frame");
         telemetry = new QLabel(analysisStatus);
         previewLayout->addWidget(resolution);
         previewLayout->addLayout(previewTools);
+        previewLayout->addLayout(outputTools);
         previewLayout->addWidget(telemetry);
         connect(roi, &QPushButton::toggled, picture, [this](bool enabled) {
             picture->editRoi = enabled;
@@ -526,6 +506,9 @@ public:
         settings.setValue("window/mirror", previewMirror->isChecked());
         settings.setValue("window/landmarks", previewLandmarks->isChecked());
         settings.setValue("video/roi", picture->roi);
+        for (const auto &[key, field] : previewFields) settings.setValue(key, field->value());
+        settings.setValue("overlay/hands", landmarkHands->currentIndex());
+        settings.setValue("overlay/handLabels", landmarkLabels->isChecked());
         settings.setValue("osc/send", send->isChecked());
         settings.setValue("destinations", destinations->text());
     }
@@ -543,6 +526,99 @@ public:
     }
 
 private:
+    struct Output {
+        std::unique_ptr<VideoOutput> sender;
+        int videoOpacity = 100;
+        int landmarkOpacity = 100;
+    };
+
+    static QFormLayout *menuForm(QMenu *menu)
+    {
+        auto *panel = new QWidget;
+        auto *form = new QFormLayout(panel);
+        auto *action = new QWidgetAction(menu);
+        action->setDefaultWidget(panel);
+        menu->addAction(action);
+        return form;
+    }
+
+    void percentField(QFormLayout *form, const QString &label, const QString &key,
+                      int &value, int minimum = 0, int maximum = 100)
+    {
+        auto *field = new QSpinBox;
+        field->setRange(minimum, maximum);
+        field->setSuffix(" %");
+        field->setValue(value);
+        field->setProperty("defaultValue", value);
+        form->addRow(label, field);
+        previewFields.emplace_back(key, field);
+        connect(field, &QSpinBox::valueChanged, this, [this, &value](int percent) {
+            value = percent;
+            picture->update();
+        });
+    }
+
+    QPushButton *landmarkSettingsButton()
+    {
+        auto *button = new QPushButton("Landmark Settings");
+        auto *menu = new QMenu(button);
+        button->setMenu(menu);
+        auto *form = menuForm(menu);
+        auto &options = picture->overlayOptions;
+        landmarkHands = new QComboBox;
+        landmarkHands->addItems({"Both hands", "Left hand", "Right hand"});
+        form->addRow("Show hands", landmarkHands);
+        connect(landmarkHands, &QComboBox::currentIndexChanged, this, [&options, this](int index) {
+            options.hands = static_cast<TrackingOverlayOptions::HandSide>(index);
+            picture->update();
+        });
+        percentField(form, "Min. hand label confidence", "overlay/confidence", options.confidence);
+        percentField(form, "Min. pose visibility", "overlay/poseVisibility", options.poseVisibility);
+        percentField(form, "Line thickness", "overlay/strokeScale", options.strokeScale, 10, 400);
+        percentField(form, "Point size", "overlay/pointScale", options.pointScale, 0, 400);
+        landmarkLabels = new QCheckBox("Show hand labels and confidence");
+        landmarkLabels->setChecked(options.handLabels);
+        form->addRow(landmarkLabels);
+        connect(landmarkLabels, &QCheckBox::toggled, this, [&options, this](bool shown) {
+            options.handLabels = shown;
+            picture->update();
+        });
+        return button;
+    }
+
+    QPushButton *outputButton(const QString &label, const QString &key, Output &output,
+                              std::unique_ptr<VideoOutput> (*openOutput)(const QString &))
+    {
+        auto *button = new QPushButton(label);
+        auto *menu = new QMenu(button);
+        button->setMenu(menu);
+        auto *enabled = menu->addAction("Enable output");
+        enabled->setCheckable(true);
+        connect(enabled, &QAction::toggled, this, [this, enabled, &output, openOutput, label](bool on) {
+            if (!on) {
+                output.sender.reset();
+                return;
+            }
+            output.sender = openOutput(QStringLiteral("MpOsc Landmarks"));
+            if (output.sender) return;
+            const QSignalBlocker block(enabled);
+            enabled->setChecked(false);
+            status->setText(QStringLiteral("Could not start %1").arg(label));
+        });
+        auto *form = menuForm(menu);
+        percentField(form, "Video opacity", "output/" + key + "/videoOpacity", output.videoOpacity);
+        percentField(form, "Landmarks opacity", "output/" + key + "/landmarkOpacity", output.landmarkOpacity);
+        return button;
+    }
+
+    void loadPreviewOptions(const QSettings &settings)
+    {
+        for (const auto &[key, field] : previewFields)
+            field->setValue(settings.value(key, field->property("defaultValue")).toInt());
+        landmarkHands->setCurrentIndex(qBound(0, settings.value("overlay/hands", 0).toInt(), landmarkHands->count() - 1));
+        landmarkLabels->setChecked(settings.value("overlay/handLabels", true).toBool());
+    }
+
     // What the interface has is reachable like every other Pixel Stereo application: OSC and OSCQuery, each parameter
     // going through its own widget, so that writing it from outside does what a click does
     void exposeControls(const QSettings &settings)
@@ -755,6 +831,7 @@ private:
         previewMirror->setChecked(local.value("window/mirror", false).toBool());
         previewLandmarks->setChecked(local.value("window/landmarks", true).toBool());
         loadDetectionOptions(local);
+        loadPreviewOptions(local);
         signalPanel->restoreRows(local);
         rememberConfiguration(path);
         status->setText("Configuration loaded");
@@ -774,9 +851,9 @@ private:
     QList<SharedSender> streamSenders(const StreamMode &mode)
     {
         if (&mode == &omtMode)
-            return withoutOutput(omtSenders(), omtOutput);
+            return withoutOutput(omtSenders(), omtOutput.sender);
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
-        return withoutOutput(sharedSenders(), syphonOutput);
+        return withoutOutput(sharedSenders(), sharedOutput.sender);
 #else
         return {};
 #endif
@@ -855,18 +932,34 @@ private:
 
     void publishFrame(const QImage &source, const QRect &area, const QJsonObject &result)
     {
-        if (!syphonOutput && !omtOutput) return;
-        QImage output(source.size(), landmarksOnly ? QImage::Format_ARGB32 : QImage::Format_RGB32);
-        if (output.isNull()) return;
-        output.fill(landmarksOnly ? Qt::transparent : Qt::black);
-        {
-            QPainter painter(&output);
-            if (!landmarksOnly) painter.drawImage(QPoint(), source);
-            drawTrackingOverlay(painter, QRectF(area), result, false);
-        }
         const auto fps = inferenceRate > 0 ? inferenceRate : frameRate > 0 ? frameRate : 30.0;
-        if (syphonOutput) syphonOutput->publish(output, fps);
-        if (omtOutput) omtOutput->publish(output, fps);
+        for (const auto *output : {&sharedOutput, &omtOutput}) {
+            if (!output->sender) continue;
+            QImage frame(source.size(), QImage::Format_ARGB32);
+            if (frame.isNull()) continue;
+            frame.fill(Qt::transparent);
+            QPainter painter(&frame);
+            if (output->videoOpacity > 0) {
+                painter.setOpacity(output->videoOpacity / 100.0);
+                painter.drawImage(QPoint(), source);
+            }
+            if (output->landmarkOpacity == 100 && !result.isEmpty()) {
+                painter.setOpacity(1.0);
+                drawTrackingOverlay(painter, area, result, false, picture->overlayOptions);
+            } else if (output->landmarkOpacity > 0 && !result.isEmpty()) {
+                QImage landmarks(area.size(), QImage::Format_ARGB32_Premultiplied);
+                if (!landmarks.isNull()) {
+                    landmarks.fill(Qt::transparent);
+                    QPainter overlay(&landmarks);
+                    drawTrackingOverlay(overlay, landmarks.rect(), result, false, picture->overlayOptions);
+                    overlay.end();
+                    painter.setOpacity(output->landmarkOpacity / 100.0);
+                    painter.drawImage(area.topLeft(), landmarks);
+                }
+            }
+            painter.end();
+            output->sender->publish(frame, fps);
+        }
     }
 
     void receiveFrame(QImage frame)
@@ -883,7 +976,10 @@ private:
             sourceSize = latest.size();
             updateSizeLabel();
         }
-        if (!mediapipe.isReady()) showFrame(latest);
+        if (!mediapipe.isReady()) {
+            showFrame(latest);
+            publishFrame(latest, {}, {});
+        }
     }
 
     void updateSizeLabel()
@@ -980,8 +1076,10 @@ private:
     QElapsedTimer discoveryClock, frameRateClock;
     double frameRate = -1;
     int frameCount = 0;
-    std::unique_ptr<VideoOutput> syphonOutput, omtOutput;
-    bool landmarksOnly = false;
+    Output sharedOutput, omtOutput;
+    std::vector<std::pair<QString, QSpinBox *>> previewFields;
+    QComboBox *landmarkHands;
+    QCheckBox *landmarkLabels;
     QAction *filtersAction;
     VideoInput video;
     MediaPipeClient mediapipe;
